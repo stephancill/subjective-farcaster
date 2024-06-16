@@ -14,10 +14,13 @@ GET /cast?fid=1689&hash=0x5201d906379adb1265bd5bb9a38ef09fd37f0972&viewerFid=168
 
 ```
 {
-  "targetFids": 74,
-  "networkFids": 47369,
-  "intersectionFids": 23,
-  "networkByDepth": {
+  "allLinksCount": 47369,
+  "intersectionCount": 24,
+  "intersectionByDepth": {
+    "0": 11,
+    "1": 13
+  },
+  "linksByDepthCounts": {
     "0": 883,
     "1": 46486
   }
@@ -34,10 +37,13 @@ GET /followers?fid=3&viewerFid=1689
 
 ```
 {
-  "targetFids": 402128,
-  "networkFids": 47369,
-  "intersectionFids": 40382,
-  "networkByDepth": {
+  "allLinksCount": 47369,
+  "intersectionCount": 40382,
+  "intersectionByDepth": {
+    "0": 804,
+    "1": 39578
+  },
+  "linksByDepthCounts": {
     "0": 883,
     "1": 46486
   }
