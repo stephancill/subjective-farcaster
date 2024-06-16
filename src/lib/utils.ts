@@ -117,6 +117,8 @@ export async function getGraphIntersection(
     {} as Record<number, number>
   );
 
+  const nonIntersectingCount = fids.length - intersectionFids.length;
+
   return {
     allLinks,
     allLinksCount: allLinks.size,
@@ -125,6 +127,7 @@ export async function getGraphIntersection(
     intersectionByDepth,
     linksByDepth,
     linksByDepthCounts,
+    nonIntersectingCount,
   };
 }
 
