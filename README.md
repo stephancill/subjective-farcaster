@@ -1,36 +1,61 @@
-This is a [Next.js](https://nextjs.org/) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# Subjective Farcaster Metrics
 
-## Getting Started
+This is a collection of cached endpoints which can be used to calculate the number of likes on a cast or the number of followers of a user filtered based on 2 degrees of separation from the viewer i.e. only counting interactions from the viewer's follows or the follows of the viewer's follows.
 
-First, run the development server:
+## Endpoints
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- `GET /cast?fid=&hash=&viewerFid=` - Returns the number of likes on a cast
+
+Sample
+
+```
+GET /cast?fid=1689&hash=0x5201d906379adb1265bd5bb9a38ef09fd37f0972&viewerFid=1689
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+```
+{
+  "targetFids": 74,
+  "networkFids": 47369,
+  "intersectionFids": 23,
+  "networkByDepth": {
+    "0": 883,
+    "1": 46486
+  }
+}
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `GET /user?fid=&viewerFid=` - Returns the number of followers of a user
 
-This project uses [`next/font`](https://nextjs.org/docs/basic-features/font-optimization) to automatically optimize and load Inter, a custom Google Font.
+Sample
 
-## Learn More
+```
+GET /followers?fid=3&viewerFid=1689
+```
 
-To learn more about Next.js, take a look at the following resources:
+```
+{
+  "targetFids": 402128,
+  "networkFids": 47369,
+  "intersectionFids": 40382,
+  "networkByDepth": {
+    "0": 883,
+    "1": 46486
+  }
+}
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Development
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js/) - your feedback and contributions are welcome!
+Copy the `.env.sample` file to `.env` and fill in the required values.
 
-## Deploy on Vercel
+```
+cp .env.sample .env
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```
+yarn install
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/deployment) for more details.
+```
+yarn start
+```
