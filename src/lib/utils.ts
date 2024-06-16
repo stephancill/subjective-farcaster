@@ -107,7 +107,25 @@ export async function getGraphIntersection(
     {} as Record<number, number>
   );
 
-  return { allLinks, intersectionFids, linksByDepth, linksByDepthCounts };
+  const intersectionByDepth = Object.entries(linksByDepth).reduce(
+    (acc, [depth, fids]) => {
+      acc[parseInt(depth)] = Array.from(fids).filter((fid) =>
+        intersectionFids.includes(fid)
+      ).length;
+      return acc;
+    },
+    {} as Record<number, number>
+  );
+
+  return {
+    allLinks,
+    allLinksCount: allLinks.size,
+    intersectionFids,
+    intersectionCount: intersectionFids.length,
+    intersectionByDepth,
+    linksByDepth,
+    linksByDepthCounts,
+  };
 }
 
 export async function getAllFollowingByFid(

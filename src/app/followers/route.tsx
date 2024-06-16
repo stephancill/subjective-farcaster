@@ -17,17 +17,10 @@ export async function GET(req: NextRequest) {
 
   const viewerFid = parseInt(viewerFidRaw);
 
-  const { allLinks, intersectionFids, linksByDepthCounts } =
+  const { allLinks, intersectionFids, linksByDepth, ...returnValue } =
     await getGraphIntersection(viewerFid, HUB_URL, followerFids);
 
-  console.log(`Follower fids: ${followerFids.length}`);
-  console.log(`Viewer network fids: ${Array.from(allLinks).length}`);
-  console.log(`Intersection: ${intersectionFids.length}`);
+  console.log("Done", returnValue);
 
-  return Response.json({
-    targetFids: followerFids.length,
-    networkFids: Array.from(allLinks).length,
-    intersectionFids: intersectionFids.length,
-    networkByDepth: linksByDepthCounts,
-  });
+  return Response.json(returnValue);
 }
