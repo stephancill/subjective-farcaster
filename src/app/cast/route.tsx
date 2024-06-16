@@ -5,9 +5,9 @@ import { HUB_URL } from "../../lib/const";
 export async function GET(req: NextRequest) {
   const hash = req.nextUrl.searchParams.get("hash");
   const fid = req.nextUrl.searchParams.get("fid");
-  const viewerFid = req.nextUrl.searchParams.get("viewerFid");
+  const viewerFidRaw = req.nextUrl.searchParams.get("viewerFid");
 
-  if (!hash || !fid || !viewerFid) {
+  if (!hash || !fid || !viewerFidRaw) {
     return new Response("Missing hash or fid or viewerFid", { status: 400 });
   }
 
@@ -17,13 +17,10 @@ export async function GET(req: NextRequest) {
     { hubUrl: HUB_URL }
   );
 
-  const _viewerFid = parseInt(viewerFid);
+  const viewerFid = parseInt(viewerFidRaw);
 
-  const { allLinks, intersectionFids } = await getGraphIntersection(
-    _viewerFid,
-    HUB_URL,
-    likedFids
-  );
+  const { allLinks, intersectionFids, linksByDepthCounts } =
+    await getGraphIntersection(viewerFid, HUB_URL, likedFids);
 
   console.log(`Liked fids: ${likedFids.length}`);
   console.log(`All links: ${Array.from(allLinks).length}`);
@@ -33,5 +30,6 @@ export async function GET(req: NextRequest) {
     targetFids: likedFids.length,
     networkFids: Array.from(allLinks).length,
     intersectionFids: intersectionFids.length,
+    networkByDepth: linksByDepthCounts,
   });
 }

@@ -30,6 +30,7 @@ export async function getGraphIntersection(
 
   // Breadth-first search to get all links up to N levels deep using getAllLinksByFid
   const allLinks = new Set<number>();
+  const linksByDepth: Record<number, Set<number>> = {};
   let linksToSearch = new Set<number>(links);
   let i = 0;
   const N = 2;
@@ -37,6 +38,7 @@ export async function getGraphIntersection(
   while (i < N && linksToSearch.size > 0) {
     console.log(`Level ${i} with ${linksToSearch.size} links`);
     const nextLinks = new Array<number[]>();
+    linksByDepth[i] = new Set();
     const linksToSearchArray = Array.from(linksToSearch);
     const linksToSearchResults = await kv.mget<(number[] | null)[]>(
       linksToSearchArray.map(formatAllLinksByFidKey)
@@ -49,7 +51,10 @@ export async function getGraphIntersection(
     );
 
     const remaining = linksToSearchArray.filter((link, idx) => {
+      if (!allLinks.has(link)) linksByDepth[i].add(link);
+
       allLinks.add(link);
+
       if (linksToSearchResults[idx]) {
         nextLinks.push(linksToSearchResults[idx] as number[]);
       }
@@ -86,13 +91,23 @@ export async function getGraphIntersection(
     i++;
   }
 
-  // Get intersection of likedFids and allLinks
+  // Get intersection of network and target fids
   let j = 0;
   const intersectionFids = fids.filter((fid) => {
     console.log(`Checking intersection ${j++}/${fids.length}`);
     return allLinks.has(fid);
   });
-  return { allLinks, intersectionFids };
+
+  // Count network fids by depth
+  const linksByDepthCounts = Object.entries(linksByDepth).reduce(
+    (acc, [depth, fids]) => {
+      acc[parseInt(depth)] = fids.size;
+      return acc;
+    },
+    {} as Record<number, number>
+  );
+
+  return { allLinks, intersectionFids, linksByDepth, linksByDepthCounts };
 }
 
 export async function getAllFollowingByFid(

@@ -17,11 +17,8 @@ export async function GET(req: NextRequest) {
 
   const viewerFid = parseInt(viewerFidRaw);
 
-  const { allLinks, intersectionFids } = await getGraphIntersection(
-    viewerFid,
-    HUB_URL,
-    followerFids
-  );
+  const { allLinks, intersectionFids, linksByDepthCounts } =
+    await getGraphIntersection(viewerFid, HUB_URL, followerFids);
 
   console.log(`Follower fids: ${followerFids.length}`);
   console.log(`Viewer network fids: ${Array.from(allLinks).length}`);
@@ -31,5 +28,6 @@ export async function GET(req: NextRequest) {
     targetFids: followerFids.length,
     networkFids: Array.from(allLinks).length,
     intersectionFids: intersectionFids.length,
+    networkByDepth: linksByDepthCounts,
   });
 }
