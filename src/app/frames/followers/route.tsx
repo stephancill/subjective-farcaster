@@ -4,20 +4,18 @@ import { graphIntesectionFrame } from "../../../lib/frames";
 import { frames } from "../frames";
 
 const handler = frames(async (ctx) => {
-  const hash = ctx.searchParams.hash;
   const fid = ctx.searchParams.fid;
-
   const viewerFid = ctx.message?.requesterFid;
 
-  if (!hash || !fid || !viewerFid) {
+  if (!fid || !viewerFid) {
     return error("Missing hash or fid or viewerFid");
   }
 
   return graphIntesectionFrame({
-    fetchIntersectionUrl: `${APP_URL}/cast?hash=${hash}&fid=${fid}&viewerFid=${viewerFid}`,
-    intersectionName: "likes",
-    refreshButtonTarget: `/cast?fid=${fid}&hash=${hash}`,
-    cacheKey: `cast:${fid}:${hash}:${viewerFid}`,
+    fetchIntersectionUrl: `${APP_URL}/followers?fid=${fid}&viewerFid=${viewerFid}`,
+    intersectionName: "followers",
+    refreshButtonTarget: `/followers?fid=${fid}`,
+    cacheKey: `followers:${fid}:${viewerFid}`,
   });
 });
 

@@ -5,9 +5,9 @@ import { ActionMetadata } from "frames.js";
 
 export const GET = (req: NextRequest) => {
   const actionMetadata: ActionMetadata = {
-    name: `Subjective Likes`,
-    icon: "heart",
-    description: `Get your number of subjective likes for a cast.`,
+    name: `Subjective Followers`,
+    icon: "people",
+    description: `Get your number of subjective followers for a user.`,
     aboutUrl: APP_URL,
     action: {
       type: "post",
@@ -20,6 +20,6 @@ export const GET = (req: NextRequest) => {
 export const POST = frames(async (ctx) => {
   return Response.json({
     type: "frame",
-    frameUrl: `${APP_URL}/frames/cast?hash=${ctx.message?.castId?.hash}&fid=${ctx.message?.castId?.fid}`,
+    frameUrl: `${APP_URL}/frames/followers?fid=${ctx.message?.castId?.fid}`,
   });
 });
