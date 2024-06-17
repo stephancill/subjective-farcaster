@@ -1,6 +1,12 @@
 import { NextRequest } from "next/server";
-import { getAllLikersByCast, getGraphIntersection } from "../../lib/utils";
+import {
+  castEndpointCacheKey,
+  getAllLikersByCast,
+  getFidCount,
+  getGraphIntersection,
+} from "../../lib/utils";
 import { HUB_URL } from "../../lib/const";
+import { kv } from "@vercel/kv";
 
 export async function GET(req: NextRequest) {
   const hash = req.nextUrl.searchParams.get("hash");
@@ -19,8 +25,28 @@ export async function GET(req: NextRequest) {
 
   const viewerFid = parseInt(viewerFidRaw);
 
-  const { allLinks, intersectionFids, linksByDepth, ...returnValue } =
-    await getGraphIntersection(viewerFid, HUB_URL, likedFids);
+  const fidCount = await getFidCount();
+
+  const {
+    allLinks,
+    intersectionFids,
+    linksByDepth,
+    ...graphIntersectionReturn
+  } = await getGraphIntersection(
+    viewerFid,
+    HUB_URL,
+    likedFids,
+    (progressMessage) => {
+      const cacheKey = castEndpointCacheKey(
+        { fid: parseInt(fid), hash },
+        viewerFid
+      );
+      kv.set(cacheKey, { status: progressMessage }, { ex: 60 * 60 });
+      console.log("Progress", progressMessage);
+    }
+  );
+
+  const returnValue = { ...graphIntersectionReturn, fidCount };
 
   console.log("Done", returnValue);
 

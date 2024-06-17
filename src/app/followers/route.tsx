@@ -1,6 +1,12 @@
 import { NextRequest } from "next/server";
-import { getAllFollowersByFid, getGraphIntersection } from "../../lib/utils";
-import { HUB_URL } from "../../lib/const";
+import {
+  followingEndpointCacheKey,
+  getAllFollowersByFid,
+  getFidCount,
+  getGraphIntersection,
+} from "../../lib/utils";
+import { HUB_URL, STATUS_CACHE_EX } from "../../lib/const";
+import { kv } from "@vercel/kv";
 
 export async function GET(req: NextRequest) {
   const fid = req.nextUrl.searchParams.get("fid");
@@ -10,15 +16,45 @@ export async function GET(req: NextRequest) {
     return new Response("Missing fid or viewerFid", { status: 400 });
   }
 
+  const viewerFid = parseInt(viewerFidRaw);
+
+  const cacheKey = followingEndpointCacheKey(parseInt(fid), viewerFid);
+
+  kv.set(
+    cacheKey,
+    { status: `Getting all followers of ${fid}` },
+    { ex: STATUS_CACHE_EX }
+  );
+
   // Get all followers of the fid
   const followerFids = await getAllFollowersByFid(parseInt(fid), {
     hubUrl: HUB_URL,
+    onProgress(message) {
+      kv.set(
+        cacheKey,
+        { status: message },
+        {
+          ex: STATUS_CACHE_EX,
+        }
+      );
+      console.log("Progress", message);
+    },
   });
 
-  const viewerFid = parseInt(viewerFidRaw);
+  const fidCount = await getFidCount();
 
-  const { allLinks, intersectionFids, linksByDepth, ...returnValue } =
-    await getGraphIntersection(viewerFid, HUB_URL, followerFids);
+  const { allLinks, intersectionFids, linksByDepth, ...returnValue } = {
+    ...(await getGraphIntersection(
+      viewerFid,
+      HUB_URL,
+      followerFids,
+      (progressMessage) => {
+        kv.set(cacheKey, { status: progressMessage }, { ex: STATUS_CACHE_EX });
+        console.log("Progress", progressMessage);
+      }
+    )),
+    fidCount,
+  };
 
   console.log("Done", returnValue);
 

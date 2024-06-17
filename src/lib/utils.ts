@@ -1,14 +1,16 @@
-import { getAllMessagesFromHubEndpoint } from "./paginate";
 import {
   Message,
   ReactionType,
+  base58ToBytes,
   isLinkAddMessage,
   isLinkCompactStateMessage,
   isReactionAddMessage,
   reactionTypeToJSON,
 } from "@farcaster/hub-web";
 import { kv } from "@vercel/kv";
-import { base58ToBytes } from "@farcaster/hub-web";
+import { createPublicClient, http, parseAbi } from "viem";
+import { optimism } from "viem/chains";
+import { getAllMessagesFromHubEndpoint } from "./paginate";
 
 export function chunkArray<T>(array: T[], size: number) {
   const result: T[][] = [];
@@ -21,12 +23,60 @@ export function formatAllLinksByFidKey(fid: number) {
   return `linksByFid:${fid}`;
 }
 
-export async function getGraphIntersection(
-  _viewerFid: number,
-  hubUrl: string,
-  fids: number[]
+export function castEndpointCacheKey(
+  castId: { fid: number; hash: string },
+  viewerFid: number
 ) {
-  const links = await getAllFollowingByFid(_viewerFid, { hubUrl });
+  return `cast:${castId.fid}:${castId.hash}:${viewerFid}`;
+}
+
+export function followingEndpointCacheKey(fid: number, viewerFid: number) {
+  return `following:${fid}:${viewerFid}`;
+}
+
+export async function getFidCount() {
+  const cached = await kv.get<number>("fidCount");
+  if (cached) {
+    return cached;
+  }
+
+  const client = createPublicClient({
+    transport: http(),
+    chain: optimism,
+  });
+  const fidCount = await client.readContract({
+    abi: parseAbi(["function idCounter() view returns (uint256)"]),
+    address: "0x00000000Fc6c5F01Fc30151999387Bb99A9f489b",
+    functionName: "idCounter",
+  });
+
+  const fidCountNumber = Number(fidCount);
+
+  kv.set("fidCount", fidCountNumber, {
+    ex: 60 * 60 * 24, // 1 day
+  });
+
+  return fidCountNumber;
+}
+
+export async function getGraphIntersection(
+  viewerFid: number,
+  hubUrl: string,
+  fids: number[],
+  onProgress: (message: string) => void = () => {}
+) {
+  const totalProgressSteps = 6;
+  let progressStep = 0;
+
+  let startTime = Date.now();
+
+  onProgress(
+    `[${progressStep++}/${totalProgressSteps}] Getting all links for viewerFid ${viewerFid}`
+  );
+
+  const links = await getAllFollowingByFid(viewerFid, { hubUrl });
+
+  console.log(`getAllFollowingByFid ${Date.now() - startTime}ms`);
 
   // Breadth-first search to get all links up to N levels deep using getAllLinksByFid
   const allLinks = new Set<number>();
@@ -36,19 +86,21 @@ export async function getGraphIntersection(
   const N = 2;
 
   while (i < N && linksToSearch.size > 0) {
-    console.log(`Level ${i} with ${linksToSearch.size} links`);
+    onProgress(
+      `[${progressStep++}/${totalProgressSteps}] Searching ${
+        linksToSearch.size
+      } links at depth ${i}`
+    );
+    // console.log(`Level ${i} with ${linksToSearch.size} links`);
     const nextLinks = new Array<number[]>();
     linksByDepth[i] = new Set();
     const linksToSearchArray = Array.from(linksToSearch);
+    let startTime = Date.now();
     const linksToSearchResults = await kv.mget<(number[] | null)[]>(
       linksToSearchArray.map(formatAllLinksByFidKey)
     );
 
-    console.log(
-      `Got linksToSearchResults: ${
-        linksToSearchResults.filter(Boolean).length
-      }/${linksToSearchArray.length}`
-    );
+    console.log(`kv.mget ${Date.now() - startTime}ms`);
 
     const remaining = linksToSearchArray.filter((link, idx) => {
       if (!allLinks.has(link)) linksByDepth[i].add(link);
@@ -61,42 +113,67 @@ export async function getGraphIntersection(
       return !linksToSearchResults[idx];
     });
 
-    console.log(`Remaining links to search: ${remaining.length}`);
+    // console.log(`Remaining links to search: ${remaining.length}`);
+
+    const batchingProgressStep = progressStep++;
+    onProgress(
+      `[${batchingProgressStep}/${totalProgressSteps}] Populating ${remaining.length} uncached links at depth ${i}`
+    );
 
     const batchSize = 100;
     const batches = chunkArray(remaining, batchSize);
 
     let j = 0;
     for (const batch of batches) {
+      let startTime = Date.now();
       const results = await Promise.all(
         batch.map((link) => getAllFollowingByFid(link, { hubUrl }))
       );
 
+      console.log(`Batch ${j} ${Date.now() - startTime}ms`);
+
       results.forEach((result) => nextLinks.push(result));
 
-      console.log(
-        `Progress: ${j * batchSize + results.length}/${remaining.length}`
+      onProgress(
+        `[${batchingProgressStep}/${totalProgressSteps}] Populated uncached links at depth ${i}: ${(
+          j * batchSize +
+          results.length
+        ).toLocaleString()}/${remaining.length.toLocaleString()}`
       );
       j++;
     }
 
     linksToSearch = new Set<number>();
 
+    startTime = Date.now();
+
     j = 0;
     for (const links of nextLinks) {
-      console.log(`Processing batch ${j++}/${nextLinks.length}`);
+      // console.log(`Processing batch ${j++}/${nextLinks.length}`);
       links.forEach((l) => linksToSearch.add(l));
     }
+
+    console.log(`Processing nextLinks ${Date.now() - startTime}ms`);
 
     i++;
   }
 
+  onProgress(
+    `[${progressStep++}/${totalProgressSteps}] Getting intersection of all links and target fids`
+  );
   // Get intersection of network and target fids
   let j = 0;
+
+  startTime = Date.now();
+
   const intersectionFids = fids.filter((fid) => {
-    console.log(`Checking intersection ${j++}/${fids.length}`);
+    // console.log(`Checking intersection ${j++}/${fids.length}`);
     return allLinks.has(fid);
   });
+
+  console.log(`Intersection ${Date.now() - startTime}ms`);
+
+  startTime = Date.now();
 
   // Count network fids by depth
   const linksByDepthCounts = Object.entries(linksByDepth).reduce(
@@ -116,6 +193,8 @@ export async function getGraphIntersection(
     },
     {} as Record<number, number>
   );
+
+  console.log(`Counting intersection by depth ${Date.now() - startTime}ms`);
 
   const nonIntersectingCount = fids.length - intersectionFids.length;
 
@@ -139,7 +218,6 @@ export async function getAllFollowingByFid(
 
   const cached = await kv.get<number[]>(key);
   if (cached) {
-    // console.log(`Cached links for fid ${fid}`);
     return cached;
   }
 
@@ -202,7 +280,10 @@ export async function getAllLikersByCast(
 
 export async function getAllFollowersByFid(
   fid: number,
-  { hubUrl }: { hubUrl: string }
+  {
+    hubUrl,
+    onProgress,
+  }: { hubUrl: string; onProgress?: (message: string) => void }
 ) {
   const key = `followersByFid:${fid}`;
 
@@ -220,9 +301,8 @@ export async function getAllFollowersByFid(
     },
     hubUrl,
     debug: true,
+    onProgress,
   });
-
-  console.log(`Got ${linksMessages.length} links for fid ${fid}`);
 
   const linksSet = new Set<number>();
 
@@ -235,7 +315,6 @@ export async function getAllFollowersByFid(
 
   const linksArray = Array.from(linksSet);
 
-  console.log(`Got ${linksArray.length} links for fid ${fid}`);
   await kv.set(key, linksArray, {
     ex: 60 * 60 * 24, // 1 day
   });

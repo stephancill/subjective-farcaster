@@ -36,12 +36,14 @@ export async function getAllMessagesFromHubEndpoint({
   params,
   limit,
   debug,
+  onProgress,
 }: {
   endpoint: string;
   hubUrl: string;
   params: Record<string, string>;
   limit?: number;
   debug?: boolean;
+  onProgress?: (message: string) => void;
 }) {
   const messages: unknown[] = new Array();
   let nextPageToken: string | undefined;
@@ -77,8 +79,14 @@ export async function getAllMessagesFromHubEndpoint({
     messages.push(...transformedMessages);
 
     if (debug) {
-      console.log(`Total messages ${messages.length} from ${url}`);
+      console.log(
+        `Total messages ${messages.length.toLocaleString()} from ${url}`
+      );
     }
+
+    onProgress?.(
+      `Fetched ${messages.length.toLocaleString()} messages from ${endpoint}`
+    );
 
     // Only fetch one page in development
     if (process.env.NEXT_PUBLIC_NODE_ENV === "development") {

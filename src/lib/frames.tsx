@@ -1,8 +1,8 @@
 import { kv } from "@vercel/kv";
 import { FrameDefinition } from "frames.js/types";
-import { getGraphIntersection } from "./utils";
 import { ResultsView } from "../app/frames/components/ResultsView";
-import { RESULT_CACHE_EX } from "./const";
+import { RESULT_CACHE_EX, STATUS_CACHE_EX } from "./const";
+import { GetGraphIntersectionResponse } from "./types";
 
 export async function graphIntesectionFrame({
   fetchIntersectionUrl,
@@ -21,34 +21,42 @@ export async function graphIntesectionFrame({
     target: refreshButtonTarget,
   } as const;
 
-  // const cacheKey = `${intersectionName}:${fid}:${hash}:${viewerFid}`;
+  console.log("cacheKey", cacheKey);
+  const resultCacheKey = `${cacheKey}:result`;
 
-  const result = await kv.get<
-    Awaited<ReturnType<typeof getGraphIntersection>> | { status: string }
-  >(cacheKey);
+  const [statusCache, resultCache] = await Promise.all([
+    kv.get<{ status: string }>(cacheKey),
+    kv.get<GetGraphIntersectionResponse>(resultCacheKey),
+  ]);
 
-  if (result && "status" in result) {
+  if (!resultCache && statusCache?.status) {
     return {
       image: (
         <div tw="flex p-10 text-[58px] bg-[#17101F] text-white w-full h-full justify-center items-center">
-          {result.status}
+          {statusCache.status}
         </div>
       ),
       buttons: [refreshButton],
     };
-  } else if (result) {
+  } else if (resultCache) {
     return {
-      image: <ResultsView results={result}>{intersectionName}</ResultsView>,
+      image: (
+        <ResultsView results={resultCache}>{intersectionName}</ResultsView>
+      ),
     };
   }
 
+  const status = "Loading...";
+
   await kv.set(
     cacheKey,
-    { status: "Loading..." },
+    { status },
     {
-      ex: 60 * 60, // 1 hour
+      ex: STATUS_CACHE_EX, // 1 hour
     }
   );
+
+  await kv.del(resultCacheKey);
 
   fetch(fetchIntersectionUrl).then(async (res) => {
     if (!res.ok) {
@@ -64,7 +72,7 @@ export async function graphIntesectionFrame({
 
     const data = await res.json();
 
-    kv.set(cacheKey, data, {
+    kv.set(resultCacheKey, data, {
       ex: RESULT_CACHE_EX, // 1 hour
     });
   });
@@ -72,7 +80,7 @@ export async function graphIntesectionFrame({
   return {
     image: (
       <div tw="flex p-10 text-[58px] bg-[#17101F] text-white w-full h-full justify-center items-center">
-        Loading...
+        {status}
       </div>
     ),
     buttons: [refreshButton],
