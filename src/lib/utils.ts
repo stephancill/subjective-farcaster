@@ -8,6 +8,7 @@ import {
   reactionTypeToJSON,
 } from "@farcaster/hub-web";
 import { kv } from "@vercel/kv";
+import fastq from "fastq";
 import { createPublicClient, http, parseAbi } from "viem";
 import { optimism } from "viem/chains";
 import { getAllMessagesFromHubEndpoint } from "./paginate";
@@ -65,113 +66,19 @@ export async function getGraphIntersection(
   fids: number[],
   onProgress: (message: string) => void = () => {}
 ) {
-  const totalProgressSteps = 6;
-  let progressStep = 0;
-
   let startTime = Date.now();
-
-  onProgress(
-    `[${progressStep++}/${totalProgressSteps}] Getting all links for viewerFid ${viewerFid}`
-  );
-
-  const links = await getAllFollowingByFid(viewerFid, { hubUrl });
-
-  console.log(`getAllFollowingByFid ${Date.now() - startTime}ms`);
-
-  // Breadth-first search to get all links up to N levels deep using getAllLinksByFid
-  const allLinks = new Set<number>();
-  const linksByDepth: Record<number, Set<number>> = {};
-  let linksToSearch = new Set<number>(links);
-  let i = 0;
-  const N = 2;
-
-  while (i < N && linksToSearch.size > 0) {
-    onProgress(
-      `[${progressStep++}/${totalProgressSteps}] Searching ${
-        linksToSearch.size
-      } links at depth ${i}`
-    );
-    // console.log(`Level ${i} with ${linksToSearch.size} links`);
-    const nextLinks = new Array<number[]>();
-    linksByDepth[i] = new Set();
-    const linksToSearchArray = Array.from(linksToSearch);
-    let startTime = Date.now();
-    const linksToSearchResults = await kv.mget<(number[] | null)[]>(
-      linksToSearchArray.map(formatAllLinksByFidKey)
-    );
-
-    console.log(`kv.mget ${Date.now() - startTime}ms`);
-
-    const remaining = linksToSearchArray.filter((link, idx) => {
-      if (!allLinks.has(link)) linksByDepth[i].add(link);
-
-      allLinks.add(link);
-
-      if (linksToSearchResults[idx]) {
-        nextLinks.push(linksToSearchResults[idx] as number[]);
-      }
-      return !linksToSearchResults[idx];
-    });
-
-    // console.log(`Remaining links to search: ${remaining.length}`);
-
-    const batchingProgressStep = progressStep++;
-    onProgress(
-      `[${batchingProgressStep}/${totalProgressSteps}] Populating ${remaining.length} uncached links at depth ${i}`
-    );
-
-    const batchSize = 100;
-    const batches = chunkArray(remaining, batchSize);
-
-    let j = 0;
-    for (const batch of batches) {
-      let startTime = Date.now();
-      const results = await Promise.all(
-        batch.map((link) => getAllFollowingByFid(link, { hubUrl }))
-      );
-
-      console.log(`Batch ${j} ${Date.now() - startTime}ms`);
-
-      results.forEach((result) => nextLinks.push(result));
-
-      onProgress(
-        `[${batchingProgressStep}/${totalProgressSteps}] Populated uncached links at depth ${i}: ${(
-          j * batchSize +
-          results.length
-        ).toLocaleString()}/${remaining.length.toLocaleString()}`
-      );
-      j++;
-    }
-
-    linksToSearch = new Set<number>();
-
-    startTime = Date.now();
-
-    j = 0;
-    for (const links of nextLinks) {
-      // console.log(`Processing batch ${j++}/${nextLinks.length}`);
-      links.forEach((l) => linksToSearch.add(l));
-    }
-
-    console.log(`Processing nextLinks ${Date.now() - startTime}ms`);
-
-    i++;
-  }
-
-  onProgress(
-    `[${progressStep++}/${totalProgressSteps}] Getting intersection of all links and target fids`
-  );
-  // Get intersection of network and target fids
-  let j = 0;
-
+  const { allLinks, linksByDepth } = await getUserNetwork(viewerFid, {
+    onProgress,
+    hubUrl,
+  });
   startTime = Date.now();
 
+  // Get intersection of network and target fids
+  onProgress(`Getting intersection of all links and target fids`);
   const intersectionFids = fids.filter((fid) => {
     // console.log(`Checking intersection ${j++}/${fids.length}`);
     return allLinks.has(fid);
   });
-
-  console.log(`Intersection ${Date.now() - startTime}ms`);
 
   startTime = Date.now();
 
@@ -208,6 +115,127 @@ export async function getGraphIntersection(
     linksByDepthCounts,
     nonIntersectingCount,
   };
+}
+
+export async function getUserNetwork(
+  fid: number,
+  {
+    hubUrl,
+    onProgress = () => {},
+    forceRefresh,
+  }: {
+    onProgress?: (message: string) => void;
+    hubUrl: string;
+    forceRefresh?: boolean;
+  }
+) {
+  let startTime = Date.now();
+
+  const cacheKey = `network:${fid}`;
+  const cached = await kv.get<{
+    linksByDepth: Record<number, number[]>;
+  }>(cacheKey);
+  if (cached && !forceRefresh) {
+    const allLinks = new Set<number>();
+    const linksByDepth = Object.entries(cached.linksByDepth).reduce(
+      (acc, [depth, fids]) => {
+        // Add to allLinks
+        fids.forEach((fid) => allLinks.add(fid));
+        // Convert to Set
+        acc[parseInt(depth)] = new Set(fids);
+        return acc;
+      },
+      {} as Record<number, Set<number>>
+    );
+    return { allLinks, linksByDepth };
+  }
+
+  onProgress(`Getting all links for viewerFid ${fid}`);
+
+  const links = await getAllFollowingByFid(fid, { hubUrl });
+
+  console.log(`getAllFollowingByFid ${Date.now() - startTime}ms`);
+
+  // Breadth-first search to get all links up to N levels deep using getAllLinksByFid
+  const allLinks = new Set<number>();
+  const linksByDepth: Record<number, Set<number>> = {};
+  let linksToSearch = new Set<number>(links);
+  let i = 0;
+  const N = 2;
+
+  while (i < N && linksToSearch.size > 0) {
+    onProgress(`Searching ${linksToSearch.size} links at depth ${i}`);
+
+    const nextLinks = new Array<number[]>();
+    linksByDepth[i] = new Set();
+    const linksToSearchArray = Array.from(linksToSearch);
+    let startTime = Date.now();
+    const linksToSearchResults = await kv.mget<(number[] | null)[]>(
+      linksToSearchArray.map(formatAllLinksByFidKey)
+    );
+
+    console.log(`kv.mget ${Date.now() - startTime}ms`);
+
+    const remaining = linksToSearchArray.filter((link, idx) => {
+      if (!allLinks.has(link)) linksByDepth[i].add(link);
+
+      allLinks.add(link);
+
+      if (linksToSearchResults[idx]) {
+        nextLinks.push(linksToSearchResults[idx] as number[]);
+      }
+      return !linksToSearchResults[idx];
+    });
+
+    onProgress(`Populating ${remaining.length} uncached links at depth ${i}`);
+
+    let completed = 0;
+    const queue = fastq.promise(async (fid: number) => {
+      const result = await getAllFollowingByFid(fid, { hubUrl });
+      nextLinks.push(result);
+      completed += 1;
+      if (completed % 200 === 0)
+        onProgress(
+          `Populated uncached links at depth ${i}: ${completed.toLocaleString()}/${remaining.length.toLocaleString()}`
+        );
+    }, 100);
+
+    for (const fid of remaining) {
+      queue.push(fid);
+    }
+
+    await queue.drained();
+
+    linksToSearch = new Set<number>();
+
+    startTime = Date.now();
+
+    // j = 0;
+    for (const links of nextLinks) {
+      // console.log(`Processing batch ${j++}/${nextLinks.length}`);
+      links.forEach((l) => linksToSearch.add(l));
+    }
+
+    console.log(`Processing nextLinks ${Date.now() - startTime}ms`);
+
+    i++;
+  }
+
+  const linksByDepthArrays = Object.entries(linksByDepth).reduce(
+    (acc, [k, v]) => {
+      acc[parseInt(k)] = Array.from(v);
+      return acc;
+    },
+    {} as Record<number, number[]>
+  );
+
+  await kv.set(
+    cacheKey,
+    { linksByDepth: linksByDepthArrays },
+    { ex: 60 * 60 * 24 }
+  );
+
+  return { allLinks, linksByDepth };
 }
 
 export async function getAllFollowingByFid(
