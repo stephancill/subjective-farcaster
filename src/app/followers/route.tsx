@@ -5,8 +5,9 @@ import {
   getFidCount,
   getGraphIntersection,
 } from "../../lib/utils";
-import { HUB_URL, STATUS_CACHE_EX } from "../../lib/const";
+import { HUB_HOST, HUB_SSL, HUB_URL, STATUS_CACHE_EX } from "../../lib/const";
 import { kv } from "@vercel/kv";
+import { getHubClient } from "../../lib/hub";
 
 export async function GET(req: NextRequest) {
   const fid = req.nextUrl.searchParams.get("fid");
@@ -26,9 +27,11 @@ export async function GET(req: NextRequest) {
     { ex: STATUS_CACHE_EX }
   );
 
+  const hubClient = getHubClient(HUB_HOST!, { ssl: HUB_SSL });
+
   // Get all followers of the fid
   const followerFids = await getAllFollowersByFid(parseInt(fid), {
-    hubUrl: HUB_URL,
+    hubClient,
     onProgress(message) {
       kv.set(
         cacheKey,
@@ -46,7 +49,7 @@ export async function GET(req: NextRequest) {
   const { allLinks, intersectionFids, linksByDepth, ...returnValue } = {
     ...(await getGraphIntersection(
       viewerFid,
-      HUB_URL,
+      hubClient,
       followerFids,
       (progressMessage) => {
         kv.set(cacheKey, { status: progressMessage }, { ex: STATUS_CACHE_EX });

@@ -1,17 +1,19 @@
 import {
-  Message,
-  ReactionType,
+  HubRpcClient,
   base58ToBytes,
   isLinkAddMessage,
   isLinkCompactStateMessage,
   isReactionAddMessage,
-  reactionTypeToJSON,
-} from "@farcaster/hub-web";
+} from "@farcaster/hub-nodejs";
 import { kv } from "@vercel/kv";
 import fastq from "fastq";
-import { createPublicClient, http, parseAbi } from "viem";
+import { createPublicClient, hexToBytes, http, parseAbi } from "viem";
 import { optimism } from "viem/chains";
-import { getAllMessagesFromHubEndpoint } from "./paginate";
+import {
+  getAllLikesByCast,
+  getAllLinksByFid,
+  getAllLinskByTarget,
+} from "./paginate-rpc";
 
 export function chunkArray<T>(array: T[], size: number) {
   const result: T[][] = [];
@@ -62,14 +64,14 @@ export async function getFidCount() {
 
 export async function getGraphIntersection(
   viewerFid: number,
-  hubUrl: string,
+  hubClient: HubRpcClient,
   fids: number[],
   onProgress: (message: string) => void = () => {}
 ) {
   let startTime = Date.now();
   const { allLinks, linksByDepth } = await getUserNetwork(viewerFid, {
     onProgress,
-    hubUrl,
+    hubClient,
   });
   startTime = Date.now();
 
@@ -120,12 +122,12 @@ export async function getGraphIntersection(
 export async function getUserNetwork(
   fid: number,
   {
-    hubUrl,
+    hubClient,
     onProgress = () => {},
     forceRefresh,
   }: {
     onProgress?: (message: string) => void;
-    hubUrl: string;
+    hubClient: HubRpcClient;
     forceRefresh?: boolean;
   }
 ) {
@@ -152,7 +154,7 @@ export async function getUserNetwork(
 
   onProgress(`Getting all links for viewerFid ${fid}`);
 
-  const links = await getAllFollowingByFid(fid, { hubUrl });
+  const links = await getAllFollowingByFid(fid, { hubClient, onProgress });
 
   console.log(`getAllFollowingByFid ${Date.now() - startTime}ms`);
 
@@ -191,14 +193,14 @@ export async function getUserNetwork(
 
     let completed = 0;
     const queue = fastq.promise(async (fid: number) => {
-      const result = await getAllFollowingByFid(fid, { hubUrl });
+      const result = await getAllFollowingByFid(fid, { hubClient });
       nextLinks.push(result);
       completed += 1;
       if (completed % 200 === 0)
         onProgress(
           `Populated uncached links at depth ${i}: ${completed.toLocaleString()}/${remaining.length.toLocaleString()}`
         );
-    }, 100);
+    }, 5);
 
     for (const fid of remaining) {
       queue.push(fid);
@@ -240,7 +242,10 @@ export async function getUserNetwork(
 
 export async function getAllFollowingByFid(
   fid: number,
-  { hubUrl }: { hubUrl: string }
+  {
+    hubClient,
+    onProgress,
+  }: { hubClient: HubRpcClient; onProgress?: (message: string) => void }
 ) {
   const key = formatAllLinksByFidKey(fid);
 
@@ -249,28 +254,19 @@ export async function getAllFollowingByFid(
     return cached;
   }
 
-  const linksMessages: unknown[] = await getAllMessagesFromHubEndpoint({
-    endpoint: "/v1/linksByFid",
-    hubUrl,
-    params: {
-      fid: fid.toString(),
-    },
-    limit: 3000,
-  });
+  const linksMessages = await getAllLinksByFid({ fid }, hubClient, onProgress);
 
   const linksSet = new Set<number>();
 
-  linksMessages
-    .map((linkMessage) => Message.fromJSON(linkMessage))
-    .forEach((linkMessage) =>
-      isLinkAddMessage(linkMessage) && linkMessage.data.linkBody.targetFid
-        ? linksSet.add(linkMessage.data.linkBody.targetFid)
-        : isLinkCompactStateMessage(linkMessage)
-        ? linkMessage.data.linkCompactStateBody.targetFids.forEach((t) =>
-            linksSet.add(t)
-          )
-        : null
-    );
+  linksMessages.forEach((linkMessage) =>
+    isLinkAddMessage(linkMessage) && linkMessage.data.linkBody.targetFid
+      ? linksSet.add(linkMessage.data.linkBody.targetFid)
+      : isLinkCompactStateMessage(linkMessage)
+      ? linkMessage.data.linkCompactStateBody.targetFids.forEach((t) =>
+          linksSet.add(t)
+        )
+      : null
+  );
 
   const linksArray = Array.from(linksSet);
 
@@ -282,21 +278,12 @@ export async function getAllFollowingByFid(
 }
 
 export async function getAllLikersByCast(
-  castId: { fid: number; hash: string },
-  { hubUrl }: { hubUrl: string }
+  castId: { fid: number; hash: `0x${string}` },
+  { hubClient }: { hubClient: HubRpcClient }
 ) {
-  const reactionMessagesJson: unknown[] = await getAllMessagesFromHubEndpoint({
-    endpoint: "/v1/reactionsByCast",
-    params: {
-      target_fid: castId.fid.toString(),
-      target_hash: castId.hash,
-      reaction_type: reactionTypeToJSON(ReactionType.LIKE),
-    },
-    hubUrl,
-  });
-
-  const reactions = reactionMessagesJson.map((reactionMessage) =>
-    Message.fromJSON(reactionMessage)
+  const reactions = await getAllLikesByCast(
+    { fid: castId.fid, hash: hexToBytes(castId.hash) },
+    hubClient
   );
 
   console.log(`Got ${reactions.length} reaction messages`);
@@ -309,9 +296,9 @@ export async function getAllLikersByCast(
 export async function getAllFollowersByFid(
   fid: number,
   {
-    hubUrl,
+    hubClient,
     onProgress,
-  }: { hubUrl: string; onProgress?: (message: string) => void }
+  }: { hubClient: HubRpcClient; onProgress?: (message: string) => void }
 ) {
   const key = `followersByFid:${fid}`;
 
@@ -321,25 +308,18 @@ export async function getAllFollowersByFid(
     return cached;
   }
 
-  const linksMessages: unknown[] = await getAllMessagesFromHubEndpoint({
-    endpoint: "/v1/linksByTargetFid",
-    params: {
-      target_fid: fid.toString(),
-      link_type: "follow",
-    },
-    hubUrl,
-    debug: true,
-    onProgress,
-  });
+  const linksMessages = await getAllLinskByTarget(
+    { fid },
+    hubClient,
+    onProgress
+  );
 
   const linksSet = new Set<number>();
 
-  linksMessages
-    .map((linkMessage) => Message.fromJSON(linkMessage))
-    .forEach(
-      (linkMessage) =>
-        isLinkAddMessage(linkMessage) && linksSet.add(linkMessage.data.fid)
-    );
+  linksMessages.forEach(
+    (linkMessage) =>
+      isLinkAddMessage(linkMessage) && linksSet.add(linkMessage.data.fid)
+  );
 
   const linksArray = Array.from(linksSet);
 

@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@farcaster/hub-nodejs": "^0.11.16",
     "@farcaster/hub-web": "^0.8.10",
     "@vercel/kv": "^2.0.0",
     "fastq": "^1.17.1",

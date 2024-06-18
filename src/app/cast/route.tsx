@@ -5,8 +5,9 @@ import {
   getFidCount,
   getGraphIntersection,
 } from "../../lib/utils";
-import { HUB_URL } from "../../lib/const";
+import { HUB_HOST, HUB_SSL, HUB_URL } from "../../lib/const";
 import { kv } from "@vercel/kv";
+import { getHubClient } from "../../lib/hub";
 
 export async function GET(req: NextRequest) {
   const hash = req.nextUrl.searchParams.get("hash");
@@ -17,10 +18,12 @@ export async function GET(req: NextRequest) {
     return new Response("Missing hash or fid or viewerFid", { status: 400 });
   }
 
+  const hubClient = getHubClient(HUB_HOST!, { ssl: HUB_SSL });
+
   // Get all reactions to the cast
   const likedFids = await getAllLikersByCast(
-    { fid: parseInt(fid), hash },
-    { hubUrl: HUB_URL }
+    { fid: parseInt(fid), hash: hash as `0x${string}` },
+    { hubClient }
   );
 
   const viewerFid = parseInt(viewerFidRaw);
@@ -34,7 +37,7 @@ export async function GET(req: NextRequest) {
     ...graphIntersectionReturn
   } = await getGraphIntersection(
     viewerFid,
-    HUB_URL,
+    hubClient,
     likedFids,
     (progressMessage) => {
       const cacheKey = castEndpointCacheKey(
