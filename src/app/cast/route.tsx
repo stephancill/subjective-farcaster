@@ -1,12 +1,16 @@
+import { kv } from "@vercel/kv";
 import { NextRequest } from "next/server";
+import { HUB_URL, POPULATE_NETWORK_JOB_NAME } from "../../lib/const";
+import { redis } from "../../lib/redis";
 import {
-  castEndpointCacheKey,
+  deserializeNetwork,
   getAllLikersByCast,
   getFidCount,
   getGraphIntersection,
+  getNetworkByFidKey,
+  getPopulateNetworkJobId,
 } from "../../lib/utils";
-import { HUB_URL } from "../../lib/const";
-import { kv } from "@vercel/kv";
+import { getQueue } from "../../lib/worker";
 
 export async function GET(req: NextRequest) {
   const hash = req.nextUrl.searchParams.get("hash");
@@ -17,34 +21,63 @@ export async function GET(req: NextRequest) {
     return new Response("Missing hash or fid or viewerFid", { status: 400 });
   }
 
+  const queue = getQueue(redis);
+
+  const viewerFid = parseInt(viewerFidRaw);
+
+  const networkCacheKey = getNetworkByFidKey(viewerFid);
+  const networkJobId = getPopulateNetworkJobId(viewerFid);
+
+  const [viewerNetworkSerialized, networkJob] = await Promise.all([
+    kv.get<{
+      linksByDepth: Record<number, number[]>;
+    }>(networkCacheKey),
+    queue.getJob(networkJobId),
+  ]);
+
+  // Add jobs to queue
+  await Promise.all([
+    queue.add(
+      POPULATE_NETWORK_JOB_NAME,
+      {
+        fid: viewerFid,
+      },
+      {
+        jobId: networkJobId,
+        priority: 100, // not important
+      }
+    ),
+  ]);
+
+  if (!viewerNetworkSerialized) {
+    return Response.json({
+      jobs: {
+        networkJob: {
+          status: networkJob?.progress || "Not started",
+        },
+      },
+      status: networkJob?.progress ? "In progress" : "Not started",
+    });
+  }
+
+  const viewerNetwork = deserializeNetwork(
+    viewerNetworkSerialized.linksByDepth
+  );
+
+  const fidCount = await getFidCount();
+
   // Get all reactions to the cast
   const likedFids = await getAllLikersByCast(
     { fid: parseInt(fid), hash },
     { hubUrl: HUB_URL }
   );
 
-  const viewerFid = parseInt(viewerFidRaw);
-
-  const fidCount = await getFidCount();
-
   const {
     allLinks,
     intersectionFids,
     linksByDepth,
     ...graphIntersectionReturn
-  } = await getGraphIntersection(
-    viewerFid,
-    HUB_URL,
-    likedFids,
-    (progressMessage) => {
-      const cacheKey = castEndpointCacheKey(
-        { fid: parseInt(fid), hash },
-        viewerFid
-      );
-      kv.set(cacheKey, { status: progressMessage }, { ex: 60 * 60 });
-      console.log("Progress", progressMessage);
-    }
-  );
+  } = await getGraphIntersection(viewerNetwork, likedFids);
 
   const returnValue = { ...graphIntersectionReturn, fidCount };
 

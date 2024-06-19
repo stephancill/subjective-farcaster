@@ -1,8 +1,12 @@
 import { Redis } from "ioredis";
 import { Job, Queue, Worker } from "bullmq";
-import { RefreshNetworkJobData } from "./types";
-import { getUserNetwork } from "./utils";
-import { HUB_URL, REFRESH_NETWORK_JOB_NAME } from "./const";
+import { RefreshNetworkJobData as FidJobData } from "./types";
+import { getAllLinksByTarget, getNetworkByFid } from "./utils";
+import {
+  HUB_URL,
+  POPULATE_FOLLOWERS_JOB_NAME,
+  POPULATE_NETWORK_JOB_NAME,
+} from "./const";
 
 const QUEUE_NAME = "default";
 
@@ -10,25 +14,54 @@ export function getWorker(
   redis: Redis,
   { concurrency = 1 }: { concurrency: number }
 ) {
+  console.log(`Creating worker with concurrency ${concurrency}`);
+
   const worker = new Worker(
     QUEUE_NAME,
-    async ({ name, data, updateProgress }: Job<RefreshNetworkJobData>) => {
-      if (name === REFRESH_NETWORK_JOB_NAME) {
-        const start = Date.now();
+    async (job: Job<FidJobData>) => {
+      const {
+        name,
+        data: { fid },
+        id: jobId,
+      } = job;
+      console.log(`Processing job ${name} for ${fid}`);
 
-        await getUserNetwork(data.fid, {
+      if (name === POPULATE_NETWORK_JOB_NAME) {
+        const start = Date.now();
+        console.log(
+          `Populating network for ${fid} at ${new Date().toISOString()}`
+        );
+
+        await getNetworkByFid(fid, {
           hubUrl: HUB_URL,
           onProgress(message) {
-            updateProgress({ message });
+            console.log(jobId, message);
+            job.updateProgress({ message });
           },
         });
 
         const elapsed = (Date.now() - start) / 1000;
         console.log(
-          `Network refreshed for ${
-            data.fid
-          } at ${new Date().toISOString()} in ${elapsed} seconds`
+          `Network populated for ${fid} at ${new Date().toISOString()} in ${elapsed} seconds`
         );
+      } else if (name === POPULATE_FOLLOWERS_JOB_NAME) {
+        const start = Date.now();
+        console.log(
+          `Populating followers for ${fid} at ${new Date().toISOString()}`
+        );
+
+        await getAllLinksByTarget(fid, {
+          hubUrl: HUB_URL,
+          onProgress(message) {
+            console.log(jobId, message);
+            job.updateProgress({ message });
+          },
+        });
+
+        const elapsed = (Date.now() - start) / 1000;
+        const completionMessage = `Followers populated for ${fid} at ${new Date().toISOString()} in ${elapsed} seconds`;
+        console.log(completionMessage);
+        await job.updateProgress({ message: completionMessage });
       }
     },
     {
@@ -36,7 +69,7 @@ export function getWorker(
       useWorkerThreads: concurrency > 1,
       concurrency,
       connection: redis,
-      removeOnComplete: { count: 100 }, // Keep at most this many completed jobs
+      removeOnComplete: { age: 60 * 12 }, // 1 hours
       removeOnFail: { count: 100 }, // Keep at most this many failed jobs
     }
   );
@@ -45,10 +78,10 @@ export function getWorker(
 }
 
 export function getQueue(redis: Redis) {
-  return new Queue("default", {
+  return new Queue(QUEUE_NAME, {
     connection: redis,
     defaultJobOptions: {
-      attempts: 3,
+      // attempts: 3,
       backoff: { delay: 1000, type: "exponential" },
     },
   });

@@ -8,12 +8,10 @@ export async function graphIntesectionFrame({
   fetchIntersectionUrl,
   intersectionName,
   refreshButtonTarget,
-  cacheKey,
 }: {
   refreshButtonTarget: string;
   intersectionName: string;
   fetchIntersectionUrl: string;
-  cacheKey: string;
 }): Promise<FrameDefinition<undefined>> {
   const refreshButton = {
     label: "Refresh ⟳",
@@ -21,68 +19,32 @@ export async function graphIntesectionFrame({
     target: refreshButtonTarget,
   } as const;
 
-  console.log("cacheKey", cacheKey);
-  const resultCacheKey = `${cacheKey}:result`;
+  const result:
+    | GetGraphIntersectionResponse
+    | {
+        status: string;
+        jobs: Record<string, { status: { message: string } }>;
+      } = await fetch(fetchIntersectionUrl).then((res) => res.json());
 
-  const [statusCache, resultCache] = await Promise.all([
-    kv.get<{ status: string }>(cacheKey),
-    kv.get<GetGraphIntersectionResponse>(resultCacheKey),
-  ]);
-
-  if (!resultCache && statusCache?.status) {
+  if ("status" in result) {
     return {
       image: (
-        <div tw="flex p-10 text-[58px] bg-[#17101F] text-white w-full h-full justify-center items-center">
-          {statusCache.status}
+        <div tw="flex flex-col p-10 text-[58px] bg-[#17101F] text-white w-full h-full justify-center items-center">
+          <div tw="flex">{result.status}</div>
+          <div tw="flex flex-col mt-10 text-[40px]">
+            {Object.entries(result.jobs).map(([name, job]) => (
+              <div tw="flex" key={name}>
+                {name}: {job.status.message}
+              </div>
+            ))}
+          </div>
         </div>
       ),
       buttons: [refreshButton],
     };
-  } else if (resultCache) {
+  } else {
     return {
-      image: (
-        <ResultsView results={resultCache}>{intersectionName}</ResultsView>
-      ),
+      image: <ResultsView results={result}>{intersectionName}</ResultsView>,
     };
   }
-
-  const status = "Loading...";
-
-  await kv.set(
-    cacheKey,
-    { status },
-    {
-      ex: STATUS_CACHE_EX, // 1 hour
-    }
-  );
-
-  await kv.del(resultCacheKey);
-
-  fetch(fetchIntersectionUrl).then(async (res) => {
-    if (!res.ok) {
-      kv.set(
-        cacheKey,
-        { status: "Something went wrong, try again in 1 minute." },
-        {
-          ex: 60, // 1 minute
-        }
-      );
-      return;
-    }
-
-    const data = await res.json();
-
-    kv.set(resultCacheKey, data, {
-      ex: RESULT_CACHE_EX, // 1 hour
-    });
-  });
-
-  return {
-    image: (
-      <div tw="flex p-10 text-[58px] bg-[#17101F] text-white w-full h-full justify-center items-center">
-        {status}
-      </div>
-    ),
-    buttons: [refreshButton],
-  };
 }

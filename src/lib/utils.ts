@@ -13,26 +13,35 @@ import { createPublicClient, http, parseAbi } from "viem";
 import { optimism } from "viem/chains";
 import { getAllMessagesFromHubEndpoint } from "./paginate";
 
-export function chunkArray<T>(array: T[], size: number) {
-  const result: T[][] = [];
-  for (let i = 0; i < array.length; i += size) {
-    result.push(array.slice(i, i + size));
-  }
-  return result;
+export function getPopulateNetworkJobId(fid: number) {
+  return `refreshNetwork-${fid}`;
 }
-export function formatAllLinksByFidKey(fid: number) {
+
+export function getPopulateFollowersJobId(fid: number) {
+  return `populateFollowers-${fid}`;
+}
+
+export function getAllLinksByFidKey(fid: number) {
   return `linksByFid:${fid}`;
 }
 
-export function castEndpointCacheKey(
+export function getAllLinksByTargetKey(fid: number) {
+  return `linksByTarget:${fid}`;
+}
+
+export function getNetworkByFidKey(fid: number) {
+  return `network:${fid}`;
+}
+
+export function getCastEndpointCacheKey(
   castId: { fid: number; hash: string },
   viewerFid: number
 ) {
-  return `cast:${castId.fid}:${castId.hash}:${viewerFid}`;
+  return `castEndpoint:${castId.fid}:${castId.hash}:${viewerFid}`;
 }
 
-export function followingEndpointCacheKey(fid: number, viewerFid: number) {
-  return `following:${fid}:${viewerFid}`;
+export function getFollowersEndpointCacheKey(fid: number, viewerFid: number) {
+  return `followersEndpoint:${fid}:${viewerFid}`;
 }
 
 export async function getFidCount() {
@@ -61,20 +70,13 @@ export async function getFidCount() {
 }
 
 export async function getGraphIntersection(
-  viewerFid: number,
-  hubUrl: string,
-  fids: number[],
-  onProgress: (message: string) => void = () => {}
+  network: Awaited<ReturnType<typeof getNetworkByFid>>,
+  fids: number[]
 ) {
   let startTime = Date.now();
-  const { allLinks, linksByDepth } = await getUserNetwork(viewerFid, {
-    onProgress,
-    hubUrl,
-  });
+  const { allLinks, linksByDepth } = network;
   startTime = Date.now();
 
-  // Get intersection of network and target fids
-  onProgress(`Getting intersection of all links and target fids`);
   const intersectionFids = fids.filter((fid) => {
     // console.log(`Checking intersection ${j++}/${fids.length}`);
     return allLinks.has(fid);
@@ -117,7 +119,22 @@ export async function getGraphIntersection(
   };
 }
 
-export async function getUserNetwork(
+export function deserializeNetwork(_linksByDepth: Record<number, number[]>) {
+  const allLinks = new Set<number>();
+  const linksByDepth = Object.entries(_linksByDepth).reduce(
+    (acc, [depth, fids]) => {
+      // Add to allLinks
+      fids.forEach((fid) => allLinks.add(fid));
+      // Convert to Set
+      acc[parseInt(depth)] = new Set(fids);
+      return acc;
+    },
+    {} as Record<number, Set<number>>
+  );
+  return { allLinks, linksByDepth };
+}
+
+export async function getNetworkByFid(
   fid: number,
   {
     hubUrl,
@@ -131,30 +148,19 @@ export async function getUserNetwork(
 ) {
   let startTime = Date.now();
 
-  const cacheKey = `network:${fid}`;
+  const cacheKey = getNetworkByFidKey(fid);
   const cached = await kv.get<{
     linksByDepth: Record<number, number[]>;
   }>(cacheKey);
   if (cached && !forceRefresh) {
-    const allLinks = new Set<number>();
-    const linksByDepth = Object.entries(cached.linksByDepth).reduce(
-      (acc, [depth, fids]) => {
-        // Add to allLinks
-        fids.forEach((fid) => allLinks.add(fid));
-        // Convert to Set
-        acc[parseInt(depth)] = new Set(fids);
-        return acc;
-      },
-      {} as Record<number, Set<number>>
-    );
-    return { allLinks, linksByDepth };
+    return deserializeNetwork(cached.linksByDepth);
   }
 
   onProgress(`Getting all links for viewerFid ${fid}`);
 
-  const links = await getAllFollowingByFid(fid, { hubUrl });
+  const links = await getAllLinksByFid(fid, { hubUrl });
 
-  console.log(`getAllFollowingByFid ${Date.now() - startTime}ms`);
+  console.log(`getAllLinksByFid ${Date.now() - startTime}ms`);
 
   // Breadth-first search to get all links up to N levels deep using getAllLinksByFid
   const allLinks = new Set<number>();
@@ -171,7 +177,7 @@ export async function getUserNetwork(
     const linksToSearchArray = Array.from(linksToSearch);
     let startTime = Date.now();
     const linksToSearchResults = await kv.mget<(number[] | null)[]>(
-      linksToSearchArray.map(formatAllLinksByFidKey)
+      linksToSearchArray.map(getAllLinksByFidKey)
     );
 
     console.log(`kv.mget ${Date.now() - startTime}ms`);
@@ -191,7 +197,7 @@ export async function getUserNetwork(
 
     let completed = 0;
     const queue = fastq.promise(async (fid: number) => {
-      const result = await getAllFollowingByFid(fid, { hubUrl });
+      const result = await getAllLinksByFid(fid, { hubUrl });
       nextLinks.push(result);
       completed += 1;
       if (completed % 200 === 0)
@@ -238,13 +244,13 @@ export async function getUserNetwork(
   return { allLinks, linksByDepth };
 }
 
-export async function getAllFollowingByFid(
+export async function getAllLinksByFid(
   fid: number,
   { hubUrl }: { hubUrl: string }
 ) {
-  const key = formatAllLinksByFidKey(fid);
+  const cacheKey = getAllLinksByFidKey(fid);
 
-  const cached = await kv.get<number[]>(key);
+  const cached = await kv.get<number[]>(cacheKey);
   if (cached) {
     return cached;
   }
@@ -274,7 +280,7 @@ export async function getAllFollowingByFid(
 
   const linksArray = Array.from(linksSet);
 
-  await kv.set(key, linksArray, {
+  await kv.set(cacheKey, linksArray, {
     ex: 60 * 60 * 24, // 1 day
   });
 
@@ -306,16 +312,16 @@ export async function getAllLikersByCast(
   return fids;
 }
 
-export async function getAllFollowersByFid(
+export async function getAllLinksByTarget(
   fid: number,
   {
     hubUrl,
     onProgress,
   }: { hubUrl: string; onProgress?: (message: string) => void }
 ) {
-  const key = `followersByFid:${fid}`;
+  const cacheKey = getAllLinksByTargetKey(fid);
 
-  const cached = await kv.get<number[]>(key);
+  const cached = await kv.get<number[]>(cacheKey);
   if (cached) {
     console.log(`Cached ${cached.length} links for fid ${fid}`);
     return cached;
@@ -343,7 +349,7 @@ export async function getAllFollowersByFid(
 
   const linksArray = Array.from(linksSet);
 
-  await kv.set(key, linksArray, {
+  await kv.set(cacheKey, linksArray, {
     ex: 60 * 60 * 24, // 1 day
   });
 

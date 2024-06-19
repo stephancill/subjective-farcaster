@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { redis } from "../src/lib/redis";
 import { getWorker } from "../src/lib/worker";
 
@@ -8,7 +9,7 @@ async function main() {
     concurrency,
   });
 
-  worker.run();
+  await worker.run();
 }
 
 main();

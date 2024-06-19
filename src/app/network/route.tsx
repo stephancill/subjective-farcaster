@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { getUserNetwork } from "../../lib/utils";
+import { getNetworkByFid } from "../../lib/utils";
 import { HUB_URL } from "../../lib/const";
 
 export async function GET(req: NextRequest) {
@@ -10,13 +10,16 @@ export async function GET(req: NextRequest) {
     return new Response("Missing viewerFid", { status: 400 });
   }
 
-  const { allLinks, linksByDepth } = await getUserNetwork(parseInt(viewerFid), {
-    hubUrl: HUB_URL,
-    forceRefresh,
-    onProgress(message) {
-      console.log(message);
-    },
-  });
+  const { allLinks, linksByDepth } = await getNetworkByFid(
+    parseInt(viewerFid),
+    {
+      hubUrl: HUB_URL,
+      forceRefresh,
+      onProgress(message) {
+        console.log(message);
+      },
+    }
+  );
 
   return Response.json({
     allLinks: Array.from(allLinks),
