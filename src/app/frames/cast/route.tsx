@@ -18,7 +18,6 @@ const handler = frames(async (ctx) => {
     fetchIntersectionUrl: `${APP_URL}/cast?hash=${hash}&fid=${fid}&viewerFid=${viewerFid}`,
     intersectionName: "likes",
     refreshButtonTarget: `/cast?fid=${fid}&hash=${hash}`,
-    cacheKey: getCastEndpointCacheKey({ fid: parseInt(fid), hash }, viewerFid),
   });
 });
 
