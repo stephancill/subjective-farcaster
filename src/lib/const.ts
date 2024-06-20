@@ -11,3 +11,7 @@ export const POPULATE_FOLLOWERS_JOB_NAME = "populateFollowers";
 
 export const RESULT_CACHE_EX = 60 * 60; // 1 hour
 export const STATUS_CACHE_EX = 60 * 60; // 1 hour
+
+export const NEO4J_URI = process.env.NEO4J_URI!;
+export const NEO4J_USER = process.env.NEO4J_USER!;
+export const NEO4J_PASSWORD = process.env.NEO4J_PASSWORD!;

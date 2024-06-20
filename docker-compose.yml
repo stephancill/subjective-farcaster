@@ -14,3 +14,18 @@ services:
       SRH_MODE: env
       SRH_TOKEN: example_token
       SRH_CONNECTION_STRING: "redis://redis:6379" # Using `redis` hostname since they're in the same Docker network.
+
+  neo4j:
+    image: neo4j:latest
+    container_name: neo4j
+    ports:
+      - "7474:7474" # HTTP
+      - "7687:7687" # Bolt
+    environment:
+      NEO4J_AUTH: neo4j/testpassword
+      NEO4J_dbms_memory_heap_max__size: 1G # Optional: Adjust memory settings
+    # volumes:
+    #   - ./neo4j/data:/data
+    #   - ./neo4j/logs:/logs
+    #   - ./neo4j/import:/var/lib/neo4j/import
+    #   - ./neo4j/plugins:/plugins
