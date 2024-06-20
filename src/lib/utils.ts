@@ -1,17 +1,20 @@
 import {
-  Message,
   ReactionType,
+  UserDataType,
   base58ToBytes,
   isLinkAddMessage,
   isLinkCompactStateMessage,
   isReactionAddMessage,
+  isUserDataAddMessage,
   reactionTypeToJSON,
+  userDataTypeToJSON,
 } from "@farcaster/hub-web";
 import { kv } from "@vercel/kv";
 import fastq from "fastq";
 import { createPublicClient, http, parseAbi } from "viem";
 import { optimism } from "viem/chains";
 import { getAllMessagesFromHubEndpoint } from "./paginate";
+import { SerializedNetwork } from "./types";
 
 export function getPopulateNetworkJobId(fid: number) {
   return `refreshNetwork-${fid}`;
@@ -119,9 +122,9 @@ export async function getGraphIntersection(
   };
 }
 
-export function deserializeNetwork(_linksByDepth: Record<number, number[]>) {
+export function deserializeNetwork(network: SerializedNetwork) {
   const allLinks = new Set<number>();
-  const linksByDepth = Object.entries(_linksByDepth).reduce(
+  const linksByDepth = Object.entries(network.linksByDepth).reduce(
     (acc, [depth, fids]) => {
       // Add to allLinks
       fids.forEach((fid) => allLinks.add(fid));
@@ -131,7 +134,7 @@ export function deserializeNetwork(_linksByDepth: Record<number, number[]>) {
     },
     {} as Record<number, Set<number>>
   );
-  return { allLinks, linksByDepth };
+  return { allLinks, ...network, linksByDepth };
 }
 
 export async function getNetworkByFid(
@@ -149,11 +152,9 @@ export async function getNetworkByFid(
   let startTime = Date.now();
 
   const cacheKey = getNetworkByFidKey(fid);
-  const cached = await kv.get<{
-    linksByDepth: Record<number, number[]>;
-  }>(cacheKey);
+  const cached = await kv.get<SerializedNetwork>(cacheKey);
   if (cached && !forceRefresh) {
-    return deserializeNetwork(cached.linksByDepth);
+    return deserializeNetwork(cached);
   }
 
   onProgress(`Getting all links for viewerFid ${fid}`);
@@ -165,6 +166,7 @@ export async function getNetworkByFid(
   // Breadth-first search to get all links up to N levels deep using getAllLinksByFid
   const allLinks = new Set<number>();
   const linksByDepth: Record<number, Set<number>> = {};
+  const popularityByFid: Record<number, number> = {};
   let linksToSearch = new Set<number>(links);
   let i = 0;
   const N = 2;
@@ -212,6 +214,8 @@ export async function getNetworkByFid(
 
     await queue.drained();
 
+    onProgress(`Populated uncached links at depth ${i}: ${remaining.length}`);
+
     linksToSearch = new Set<number>();
 
     startTime = Date.now();
@@ -219,7 +223,14 @@ export async function getNetworkByFid(
     // j = 0;
     for (const links of nextLinks) {
       // console.log(`Processing batch ${j++}/${nextLinks.length}`);
-      links.forEach((l) => linksToSearch.add(l));
+      links.forEach((l) => {
+        linksToSearch.add(l);
+
+        if (!popularityByFid[l]) {
+          popularityByFid[l] = 0;
+        }
+        popularityByFid[l] += 1;
+      });
     }
 
     console.log(`Processing nextLinks ${Date.now() - startTime}ms`);
@@ -235,13 +246,15 @@ export async function getNetworkByFid(
     {} as Record<number, number[]>
   );
 
+  onProgress(`Caching network for viewerFid ${fid}`);
+
   await kv.set(
     cacheKey,
-    { linksByDepth: linksByDepthArrays },
+    { linksByDepth: linksByDepthArrays, popularityByFid },
     { ex: 60 * 60 * 24 }
   );
 
-  return { allLinks, linksByDepth };
+  return { allLinks, linksByDepth, popularityByFid };
 }
 
 export async function getAllLinksByFid(
@@ -255,7 +268,7 @@ export async function getAllLinksByFid(
     return cached;
   }
 
-  const linksMessages: unknown[] = await getAllMessagesFromHubEndpoint({
+  const linksMessages = await getAllMessagesFromHubEndpoint({
     endpoint: "/v1/linksByFid",
     hubUrl,
     params: {
@@ -266,17 +279,15 @@ export async function getAllLinksByFid(
 
   const linksSet = new Set<number>();
 
-  linksMessages
-    .map((linkMessage) => Message.fromJSON(linkMessage))
-    .forEach((linkMessage) =>
-      isLinkAddMessage(linkMessage) && linkMessage.data.linkBody.targetFid
-        ? linksSet.add(linkMessage.data.linkBody.targetFid)
-        : isLinkCompactStateMessage(linkMessage)
-        ? linkMessage.data.linkCompactStateBody.targetFids.forEach((t) =>
-            linksSet.add(t)
-          )
-        : null
-    );
+  linksMessages.forEach((linkMessage) =>
+    isLinkAddMessage(linkMessage) && linkMessage.data.linkBody.targetFid
+      ? linksSet.add(linkMessage.data.linkBody.targetFid)
+      : isLinkCompactStateMessage(linkMessage)
+      ? linkMessage.data.linkCompactStateBody.targetFids.forEach((t) =>
+          linksSet.add(t)
+        )
+      : null
+  );
 
   const linksArray = Array.from(linksSet);
 
@@ -291,7 +302,7 @@ export async function getAllLikersByCast(
   castId: { fid: number; hash: string },
   { hubUrl }: { hubUrl: string }
 ) {
-  const reactionMessagesJson: unknown[] = await getAllMessagesFromHubEndpoint({
+  const reactions = await getAllMessagesFromHubEndpoint({
     endpoint: "/v1/reactionsByCast",
     params: {
       target_fid: castId.fid.toString(),
@@ -300,10 +311,6 @@ export async function getAllLikersByCast(
     },
     hubUrl,
   });
-
-  const reactions = reactionMessagesJson.map((reactionMessage) =>
-    Message.fromJSON(reactionMessage)
-  );
 
   console.log(`Got ${reactions.length} reaction messages`);
 
@@ -327,7 +334,7 @@ export async function getAllLinksByTarget(
     return cached;
   }
 
-  const linksMessages: unknown[] = await getAllMessagesFromHubEndpoint({
+  const linksMessages = await getAllMessagesFromHubEndpoint({
     endpoint: "/v1/linksByTargetFid",
     params: {
       target_fid: fid.toString(),
@@ -340,12 +347,10 @@ export async function getAllLinksByTarget(
 
   const linksSet = new Set<number>();
 
-  linksMessages
-    .map((linkMessage) => Message.fromJSON(linkMessage))
-    .forEach(
-      (linkMessage) =>
-        isLinkAddMessage(linkMessage) && linksSet.add(linkMessage.data.fid)
-    );
+  linksMessages.forEach(
+    (linkMessage) =>
+      isLinkAddMessage(linkMessage) && linksSet.add(linkMessage.data.fid)
+  );
 
   const linksArray = Array.from(linksSet);
 
@@ -354,6 +359,33 @@ export async function getAllLinksByTarget(
   });
 
   return linksArray;
+}
+
+export async function getUserDataByFid(
+  fid: number,
+  { hubUrl }: { hubUrl: string }
+) {
+  const userData = await getAllMessagesFromHubEndpoint({
+    endpoint: "/v1/userDataByFid",
+    hubUrl,
+    params: {
+      fid: fid.toString(),
+    },
+  });
+  return userData.reduce(
+    (acc: Partial<Record<UserDataType, string>>, message) => {
+      if (!isUserDataAddMessage(message)) {
+        return acc;
+      }
+
+      return {
+        ...acc,
+        [userDataTypeToJSON(message.data.userDataBody.type)]:
+          message.data.userDataBody.value,
+      };
+    },
+    {} as Record<string, string>
+  );
 }
 
 // Map of current key names to old key names that we want to preserve for backwards compatibility reasons

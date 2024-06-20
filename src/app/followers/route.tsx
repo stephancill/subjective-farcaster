@@ -17,6 +17,7 @@ import {
   getPopulateNetworkJobId,
 } from "../../lib/utils";
 import { getQueue } from "../../lib/worker";
+import { SerializedNetwork } from "../../lib/types";
 
 export async function GET(req: NextRequest) {
   const fidRaw = req.nextUrl.searchParams.get("fid");
@@ -49,9 +50,7 @@ export async function GET(req: NextRequest) {
     await Promise.all([
       kv.get<number[]>(linksByTargetCacheKey),
       queue.getJob(followersJobId),
-      kv.get<{
-        linksByDepth: Record<number, number[]>;
-      }>(networkCacheKey),
+      kv.get<SerializedNetwork>(networkCacheKey),
       queue.getJob(networkJobId),
     ]);
 
@@ -96,9 +95,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const viewerNetwork = deserializeNetwork(
-    viewerNetworkSerialized.linksByDepth
-  );
+  const viewerNetwork = deserializeNetwork(viewerNetworkSerialized);
 
   const fidCount = await getFidCount();
 

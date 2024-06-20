@@ -2,6 +2,7 @@ import { kv } from "@vercel/kv";
 import { NextRequest } from "next/server";
 import { HUB_URL, POPULATE_NETWORK_JOB_NAME } from "../../lib/const";
 import { redis } from "../../lib/redis";
+import type { SerializedNetwork } from "../../lib/types";
 import {
   deserializeNetwork,
   getAllLikersByCast,
@@ -29,9 +30,7 @@ export async function GET(req: NextRequest) {
   const networkJobId = getPopulateNetworkJobId(viewerFid);
 
   const [viewerNetworkSerialized, networkJob] = await Promise.all([
-    kv.get<{
-      linksByDepth: Record<number, number[]>;
-    }>(networkCacheKey),
+    kv.get<SerializedNetwork>(networkCacheKey),
     queue.getJob(networkJobId),
   ]);
 
@@ -60,9 +59,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const viewerNetwork = deserializeNetwork(
-    viewerNetworkSerialized.linksByDepth
-  );
+  const viewerNetwork = deserializeNetwork(viewerNetworkSerialized);
 
   const fidCount = await getFidCount();
 

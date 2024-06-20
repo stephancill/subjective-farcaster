@@ -7,4 +7,9 @@ export type GetGraphIntersectionResponse = Awaited<
   fidCount: number;
 };
 
+export type SerializedNetwork = {
+  linksByDepth: Record<number, number[]>;
+  popularityByFid: Record<number, number>;
+};
+
 export type RefreshNetworkJobData = { fid: number };

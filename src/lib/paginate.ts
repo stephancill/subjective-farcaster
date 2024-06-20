@@ -1,34 +1,8 @@
-import { FidRequest, OnChainEvent, SignerEventType } from "@farcaster/hub-web";
+import { Message } from "@farcaster/hub-web";
 
-import { bytesToHex, decodeAbiParameters } from "viem";
 import { transformHashReverse } from "./utils";
 
 export const MAX_PAGE_SIZE = 1000;
-
-export const signedKeyRequestAbi = [
-  {
-    components: [
-      {
-        name: "requestFid",
-        type: "uint256",
-      },
-      {
-        name: "requestSigner",
-        type: "address",
-      },
-      {
-        name: "signature",
-        type: "bytes",
-      },
-      {
-        name: "deadline",
-        type: "uint256",
-      },
-    ],
-    name: "SignedKeyRequest",
-    type: "tuple",
-  },
-] as const;
 
 export async function getAllMessagesFromHubEndpoint({
   endpoint,
@@ -45,7 +19,7 @@ export async function getAllMessagesFromHubEndpoint({
   debug?: boolean;
   onProgress?: (message: string) => void;
 }) {
-  const messages: unknown[] = new Array();
+  const messages: Message[] = new Array();
   let nextPageToken: string | undefined;
 
   while (true) {
@@ -74,7 +48,9 @@ export async function getAllMessagesFromHubEndpoint({
 
     nextPageToken = _nextPageToken;
 
-    const transformedMessages = resMessages.map(transformHashReverse);
+    const transformedMessages = resMessages
+      .map(transformHashReverse)
+      .map(Message.fromJSON);
 
     messages.push(...transformedMessages);
 
@@ -104,115 +80,4 @@ export async function getAllMessagesFromHubEndpoint({
   }
 
   return messages;
-}
-
-export async function getAllCastsByFid(
-  fid: FidRequest,
-  { hubUrl }: { hubUrl: string }
-) {
-  const casts: unknown[] = await getAllMessagesFromHubEndpoint({
-    endpoint: "/v1/castsByFid",
-    params: {
-      fid: fid.fid.toString(),
-    },
-    hubUrl,
-  });
-
-  return casts;
-}
-
-export async function getAllReactionsByFid(
-  fid: FidRequest,
-  { hubUrl }: { hubUrl: string }
-) {
-  const reactions: unknown[] = await getAllMessagesFromHubEndpoint({
-    endpoint: "/v1/reactionsByFid",
-    params: {
-      fid: fid.fid.toString(),
-    },
-    hubUrl,
-  });
-
-  return reactions;
-}
-
-export async function getAllLinksByFid(
-  fid: FidRequest,
-  { hubUrl }: { hubUrl: string }
-) {
-  const links: unknown[] = await getAllMessagesFromHubEndpoint({
-    endpoint: "/v1/linksByFid",
-    params: {
-      fid: fid.fid.toString(),
-    },
-    hubUrl,
-  });
-
-  return links;
-}
-
-export function decodeSignedKeyRequestMetadata(metadata: Uint8Array) {
-  return decodeAbiParameters(signedKeyRequestAbi, bytesToHex(metadata))[0];
-}
-
-export async function getAllSignersByFid(
-  fid: FidRequest,
-  { hubUrl }: { hubUrl: string }
-) {
-  const events: unknown[] = new Array();
-  let nextPageToken: string | undefined;
-
-  while (true) {
-    const params = new URLSearchParams({
-      fid: fid.fid.toString(),
-      pageSize: MAX_PAGE_SIZE.toString(),
-    });
-
-    if (nextPageToken) {
-      params.append("pageToken", nextPageToken);
-    }
-
-    const res = await fetch(`${hubUrl}/v1/onChainSignersByFid?${params}`);
-    const { events: resEvents, ..._nextPageToken } = await res.json();
-
-    nextPageToken = _nextPageToken;
-
-    const transformedEvents = resEvents.map(transformHashReverse);
-
-    for (const signerJson of transformedEvents) {
-      const signer = OnChainEvent.fromJSON(signerJson);
-      const body = signer.signerEventBody;
-      const timestamp = new Date(signer.blockTimestamp * 1000);
-
-      switch (body?.eventType) {
-        case SignerEventType.ADD: {
-          const signedKeyRequestMetadata = decodeSignedKeyRequestMetadata(
-            body.metadata
-          );
-          const metadataJson = {
-            requestFid: Number(signedKeyRequestMetadata.requestFid),
-            requestSigner: signedKeyRequestMetadata.requestSigner,
-            signature: signedKeyRequestMetadata.signature,
-            deadline: Number(signedKeyRequestMetadata.deadline),
-          };
-
-          events.push({
-            ...signerJson,
-            metadata: metadataJson,
-          });
-
-          break;
-        }
-        case SignerEventType.REMOVE: {
-          break;
-        }
-      }
-    }
-
-    if (resEvents.length < MAX_PAGE_SIZE) {
-      break;
-    }
-  }
-
-  return events;
 }
