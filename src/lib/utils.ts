@@ -15,6 +15,9 @@ import { createPublicClient, http, parseAbi } from "viem";
 import { optimism } from "viem/chains";
 import { getAllMessagesFromHubEndpoint } from "./paginate";
 import { SerializedNetwork } from "./types";
+import * as paginateRpc from "./paginate-rpc";
+import { hubClient } from "./hub";
+import { HubRpcClient } from "@farcaster/hub-nodejs";
 
 export function getPopulateNetworkJobId(fid: number) {
   return `refreshNetwork-${fid}`;
@@ -159,7 +162,7 @@ export async function getNetworkByFid(
 
   onProgress(`Getting all links for viewerFid ${fid}`);
 
-  const links = await getAllLinksByFid(fid, { hubUrl });
+  const links = await getAllLinksByFid(fid, { hubClient });
 
   console.log(`getAllLinksByFid ${Date.now() - startTime}ms`);
 
@@ -199,14 +202,14 @@ export async function getNetworkByFid(
 
     let completed = 0;
     const queue = fastq.promise(async (fid: number) => {
-      const result = await getAllLinksByFid(fid, { hubUrl });
+      const result = await getAllLinksByFid(fid, { hubClient });
       nextLinks.push(result);
       completed += 1;
       if (completed % 200 === 0)
         onProgress(
           `Populated uncached links at depth ${i}: ${completed.toLocaleString()}/${remaining.length.toLocaleString()}`
         );
-    }, 100);
+    }, 1);
 
     for (const fid of remaining) {
       queue.push(fid);
@@ -259,7 +262,12 @@ export async function getNetworkByFid(
 
 export async function getAllLinksByFid(
   fid: number,
-  { hubUrl }: { hubUrl: string }
+  {
+    hubUrl,
+    hubClient,
+  }:
+    | { hubUrl: string; hubClient?: never }
+    | { hubUrl?: never; hubClient: HubRpcClient }
 ) {
   const cacheKey = getAllLinksByFidKey(fid);
 
@@ -268,14 +276,16 @@ export async function getAllLinksByFid(
     return cached;
   }
 
-  const linksMessages = await getAllMessagesFromHubEndpoint({
-    endpoint: "/v1/linksByFid",
-    hubUrl,
-    params: {
-      fid: fid.toString(),
-    },
-    limit: 3000,
-  });
+  const linksMessages = hubUrl
+    ? await getAllMessagesFromHubEndpoint({
+        endpoint: "/v1/linksByFid",
+        hubUrl,
+        params: {
+          fid: fid.toString(),
+        },
+        limit: 3000,
+      })
+    : await paginateRpc.getAllLinksByFid({ fid }, hubClient!);
 
   const linksSet = new Set<number>();
 

@@ -1,12 +1,14 @@
-import { Redis } from "ioredis";
 import { Job, Queue, Worker } from "bullmq";
-import { RefreshNetworkJobData as FidJobData } from "./types";
-import { getAllLinksByTarget, getNetworkByFid } from "./utils";
+import { Redis } from "ioredis";
 import {
   HUB_URL,
   POPULATE_FOLLOWERS_JOB_NAME,
   POPULATE_NETWORK_JOB_NAME,
 } from "./const";
+import { hubClient } from "./hub";
+import { getAllLinksByTarget } from "./paginate-rpc";
+import { RefreshNetworkJobData as FidJobData } from "./types";
+import { getNetworkByFid } from "./utils";
 
 const QUEUE_NAME = "default";
 
@@ -50,12 +52,9 @@ export function getWorker(
           `Populating followers for ${fid} at ${new Date().toISOString()}`
         );
 
-        await getAllLinksByTarget(fid, {
-          hubUrl: HUB_URL,
-          onProgress(message) {
-            console.log(jobId, message);
-            job.updateProgress({ message });
-          },
+        await getAllLinksByTarget({ fid: fid }, hubClient, (message) => {
+          console.log(jobId, message);
+          job.updateProgress({ message });
         });
 
         const elapsed = (Date.now() - start) / 1000;
@@ -69,7 +68,7 @@ export function getWorker(
       useWorkerThreads: concurrency > 1,
       concurrency,
       connection: redis,
-      removeOnComplete: { age: 60 * 12 }, // 1 hours
+      removeOnComplete: { age: 60 * 12 }, // 12 hours
       removeOnFail: { count: 100 }, // Keep at most this many failed jobs
     }
   );

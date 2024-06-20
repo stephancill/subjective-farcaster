@@ -10,6 +10,7 @@
     "worker": "tsx scripts/runWorker.ts"
   },
   "dependencies": {
+    "@farcaster/hub-nodejs": "^0.11.16",
     "@farcaster/hub-web": "^0.8.10",
     "@vercel/kv": "^2.0.0",
     "bullmq": "^5.8.2",
