@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "worker": "tsx scripts/runWorker.ts"
   },
   "dependencies": {
     "@farcaster/hub-web": "^0.8.10",

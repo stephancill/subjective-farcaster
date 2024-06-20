@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
   if (!viewerNetworkSerialized) {
     return Response.json({
       jobs: {
-        networkJob: {
+        [`Wider network of !${viewerFid}`]: {
           status: networkJob?.progress || "Not started",
         },
       },

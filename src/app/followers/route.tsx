@@ -3,21 +3,19 @@ import { NextRequest } from "next/server";
 import {
   POPULATE_FOLLOWERS_JOB_NAME,
   POPULATE_NETWORK_JOB_NAME,
-  STATUS_CACHE_EX,
 } from "../../lib/const";
 import { redis } from "../../lib/redis";
+import { SerializedNetwork } from "../../lib/types";
 import {
   deserializeNetwork,
   getAllLinksByTargetKey,
   getFidCount,
-  getFollowersEndpointCacheKey,
   getGraphIntersection,
   getNetworkByFidKey,
   getPopulateFollowersJobId,
   getPopulateNetworkJobId,
 } from "../../lib/utils";
 import { getQueue } from "../../lib/worker";
-import { SerializedNetwork } from "../../lib/types";
 
 export async function GET(req: NextRequest) {
   const fidRaw = req.nextUrl.searchParams.get("fid");
@@ -30,15 +28,6 @@ export async function GET(req: NextRequest) {
   const viewerFid = parseInt(viewerFidRaw);
   const fid = parseInt(fidRaw);
 
-  const cacheKey = getFollowersEndpointCacheKey(fid, viewerFid);
-
-  kv.set(
-    cacheKey,
-    { status: `Getting all followers of ${fid}` },
-    { ex: STATUS_CACHE_EX }
-  );
-
-  // Queue job to get all followers of the fid
   const queue = getQueue(redis);
 
   const linksByTargetCacheKey = getAllLinksByTargetKey(fid);
@@ -81,10 +70,10 @@ export async function GET(req: NextRequest) {
   if (!followers || !viewerNetworkSerialized) {
     return Response.json({
       jobs: {
-        followerFidsJob: {
+        [`Followers for !${fid}`]: {
           status: followerFidsJob?.progress || "Not started",
         },
-        networkJob: {
+        [`Wider network of !${viewerFid}`]: {
           status: networkJob?.progress || "Not started",
         },
       },
