@@ -1,15 +1,12 @@
-import { kv } from "@vercel/kv";
 import { NextRequest } from "next/server";
-import { HUB_URL, POPULATE_NETWORK_JOB_NAME } from "../../lib/const";
+import { HUB_URL } from "../../lib/const";
 import { redis } from "../../lib/redis";
-import { SerializedNetwork } from "../../lib/types";
 import {
   deserializeNetwork,
-  getNetworkByFidKey,
-  getPopulateNetworkJobId,
+  ensureNetworkViaJob,
   getUserDataByFid,
 } from "../../lib/utils";
-import { getQueue } from "../../lib/worker";
+import { getNetworkQueue } from "../../lib/worker";
 
 export async function GET(req: NextRequest) {
   const viewerFidRaw = req.nextUrl.searchParams.get("viewerFid");
@@ -23,36 +20,15 @@ export async function GET(req: NextRequest) {
 
   const viewerFid = parseInt(viewerFidRaw);
 
-  const queue = getQueue(redis);
+  const queue = getNetworkQueue(redis);
 
-  const networkCacheKey = getNetworkByFidKey(viewerFid);
-  const networkJobId = getPopulateNetworkJobId(viewerFid);
-
-  const [viewerNetworkSerialized, networkJob] = await Promise.all([
-    kv.get<SerializedNetwork>(networkCacheKey),
-    queue.getJob(networkJobId),
-  ]);
-
-  // Add jobs to queue
-  await Promise.all([
-    queue.add(
-      POPULATE_NETWORK_JOB_NAME,
-      {
-        fid: viewerFid,
-      },
-      {
-        jobId: networkJobId,
-        priority: forceRefresh ? 1 : 100,
-      }
-    ),
-  ]);
+  const { viewerNetworkSerialized, jobDescriptor, networkJob } =
+    await ensureNetworkViaJob(viewerFid, queue);
 
   if (!viewerNetworkSerialized) {
     return Response.json({
       jobs: {
-        [`Wider network of !${viewerFid}`]: {
-          status: networkJob?.progress || "Not started",
-        },
+        ...jobDescriptor,
       },
       status: networkJob?.progress ? "In progress" : "Not started",
     });

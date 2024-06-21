@@ -59,7 +59,7 @@ export async function getAllLinksByTarget(
     const messages = checkMessages(res, targetFid.fid);
     links.push(...messages);
 
-    onProgress?.(`Got ${links.length} links`);
+    onProgress?.(`Got ${links.length.toLocaleString()} links`);
 
     if (messages.length < MAX_PAGE_SIZE) {
       break;

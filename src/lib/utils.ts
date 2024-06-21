@@ -8,13 +8,13 @@ import {
   isReactionAddMessage,
   isUserDataAddMessage,
   reactionTypeToJSON,
-  userDataTypeToJSON,
 } from "@farcaster/hub-web";
 import { kv } from "@vercel/kv";
+import { Queue } from "bullmq";
 import fastq from "fastq";
 import { createPublicClient, http, parseAbi } from "viem";
 import { optimism } from "viem/chains";
-import { hubClient } from "./hub";
+import { HUB_URL, POPULATE_NETWORK_JOB_NAME } from "./const";
 import { getAllMessagesFromHubEndpoint } from "./paginate";
 import * as paginateRpc from "./paginate-rpc";
 import { SerializedNetwork } from "./types";
@@ -48,6 +48,50 @@ export function getCastEndpointCacheKey(
 
 export function getFollowersEndpointCacheKey(fid: number, viewerFid: number) {
   return `followersEndpoint:${fid}:${viewerFid}`;
+}
+
+export async function findJobPosition(jobId: string, queue: Queue) {
+  const waitingJobs = await queue.getWaiting();
+  const position = waitingJobs.findIndex((job) => job.id === jobId);
+
+  return position !== -1 ? position : null;
+}
+
+export async function ensureNetworkViaJob(fid: number, queue: Queue) {
+  const networkCacheKey = getNetworkByFidKey(fid);
+  const networkJobId = getPopulateNetworkJobId(fid);
+
+  const [viewerNetworkSerialized, networkJob, positionInQueue] =
+    await Promise.all([
+      kv.get<SerializedNetwork>(networkCacheKey),
+      queue.getJob(networkJobId),
+      findJobPosition(networkJobId, queue),
+    ]);
+
+  // Add jobs to queue
+  await Promise.all([
+    queue.add(
+      POPULATE_NETWORK_JOB_NAME,
+      {
+        fid,
+      },
+      {
+        jobId: networkJobId,
+      }
+    ),
+  ]);
+
+  const jobDescriptor = {
+    [`Wider network of !${fid}`]: {
+      status:
+        networkJob?.progress ||
+        (positionInQueue
+          ? `Position in queue: ${positionInQueue}`
+          : "Not queued"),
+    },
+  };
+
+  return { viewerNetworkSerialized, jobDescriptor, networkJob } as const;
 }
 
 export async function getFidCount() {
@@ -234,22 +278,19 @@ export async function getNetworkByFid(
 
     // Fetch links worker
     let completed = 0;
-    const queue = fastq.promise(
-      async (fid: number) => {
-        const startTime = Date.now();
-        const result = await getAllLinksByFid(fid, { hubClient });
-        nextLinks.push(result);
-        completed += 1;
-        const duration = Date.now() - startTime;
-        if (completed % 200 === 0)
-          onProgress(
-            `Populated uncached links at depth ${depth}: ${completed.toLocaleString()}/${uncachedLinks.length.toLocaleString()} ${
-              Math.round((duration / 1000) * 100) / 100
-            }s`
-          );
-      },
-      hubClient ? 1 : 50
-    );
+    const queue = fastq.promise(async (fid: number) => {
+      const startTime = Date.now();
+      const result = await getAllLinksByFid(fid, { hubUrl: HUB_URL });
+      nextLinks.push(result);
+      completed += 1;
+      const duration = Date.now() - startTime;
+      if (completed % 200 === 0)
+        onProgress(
+          `Populated uncached links at depth ${depth}: ${completed.toLocaleString()}/${uncachedLinks.length.toLocaleString()} ${
+            Math.round((duration / 1000) * 100) / 100
+          }s`
+        );
+    }, 50);
 
     // Populate fetch links worker queue
     startTime = Date.now();
