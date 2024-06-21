@@ -14,11 +14,14 @@ function constructCastActionUrl(params: { url: string }): string {
 const handler = frames(async (ctx) => {
   return {
     image: (
-      <div tw="flex p-10 text-[58px] bg-[#17101F] text-white w-full h-full justify-center items-center flex-col">
-        <div tw="text-[52px] mb-4">Subjective Farcaster</div>
-        <div tw="text-[36px]">
+      <div tw="flex flex-col bg-[#17101F] text-white w-full h-full text-[48px] items-center justify-center p-20 text-center">
+        <div style={{ fontWeight: 700 }} tw="flex text-[64px]">
+          Subjective Farcaster
+        </div>
+        <div tw="flex mt-10">
           Reaction and follow counts based on your social graph.
         </div>
+        <div tw="flex absolute top-[500px] text-[#9fa3af]">by @stephancill</div>
       </div>
     ),
     buttons: [
@@ -37,6 +40,14 @@ const handler = frames(async (ctx) => {
         })}
       >
         Install Followers
+      </Button>,
+      <Button
+        action="post"
+        target={{
+          pathname: "/suggest-follows",
+        }}
+      >
+        Discover Users
       </Button>,
     ],
   };

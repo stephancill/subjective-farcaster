@@ -14,6 +14,8 @@ import { getQueue } from "../../lib/worker";
 export async function GET(req: NextRequest) {
   const viewerFidRaw = req.nextUrl.searchParams.get("viewerFid");
   const forceRefresh = req.nextUrl.searchParams.get("forceRefresh") === "true";
+  const page = parseInt(req.nextUrl.searchParams.get("page") || "0");
+  const pageSize = parseInt(req.nextUrl.searchParams.get("limit") || "10");
 
   if (!viewerFidRaw) {
     return new Response("Missing viewerFid", { status: 400 });
@@ -56,16 +58,19 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const { allLinks, linksByDepth, popularityByFid } = deserializeNetwork(
+  const { linksByDepth, popularityByFid } = deserializeNetwork(
     viewerNetworkSerialized
   );
 
   const fidsWithCountsNotFollowed = Object.entries(popularityByFid)
-    .filter(([fid, count]) => {
-      return !linksByDepth["0"].has(parseInt(fid));
+    .filter(([fid]) => {
+      return (
+        !linksByDepth["1"].has(parseInt(fid)) &&
+        !linksByDepth["0"].has(parseInt(fid))
+      );
     })
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 10);
+    .slice(pageSize * page, pageSize * page + 1);
 
   const userProfiles = await Promise.all(
     fidsWithCountsNotFollowed.map(([fid]) =>
@@ -76,6 +81,7 @@ export async function GET(req: NextRequest) {
   const usersToFollow = userProfiles.map((profile, i) => ({
     ...profile,
     count: fidsWithCountsNotFollowed[i][1],
+    fid: fidsWithCountsNotFollowed[i][0],
   }));
 
   return Response.json({

@@ -234,19 +234,22 @@ export async function getNetworkByFid(
 
     // Fetch links worker
     let completed = 0;
-    const queue = fastq.promise(async (fid: number) => {
-      const startTime = Date.now();
-      const result = await getAllLinksByFid(fid, { hubClient });
-      nextLinks.push(result);
-      completed += 1;
-      const duration = Date.now() - startTime;
-      if (completed % 200 === 0)
-        onProgress(
-          `Populated uncached links at depth ${depth}: ${completed.toLocaleString()}/${uncachedLinks.length.toLocaleString()} ${
-            Math.round((duration / 1000) * 100) / 100
-          }s`
-        );
-    }, 50);
+    const queue = fastq.promise(
+      async (fid: number) => {
+        const startTime = Date.now();
+        const result = await getAllLinksByFid(fid, { hubClient });
+        nextLinks.push(result);
+        completed += 1;
+        const duration = Date.now() - startTime;
+        if (completed % 200 === 0)
+          onProgress(
+            `Populated uncached links at depth ${depth}: ${completed.toLocaleString()}/${uncachedLinks.length.toLocaleString()} ${
+              Math.round((duration / 1000) * 100) / 100
+            }s`
+          );
+      },
+      hubClient ? 1 : 50
+    );
 
     // Populate fetch links worker queue
     startTime = Date.now();
@@ -434,20 +437,16 @@ export async function getUserDataByFid(
       fid: fid.toString(),
     },
   });
-  return userData.reduce(
-    (acc: Partial<Record<UserDataType, string>>, message) => {
-      if (!isUserDataAddMessage(message)) {
-        return acc;
-      }
+  return userData.reduce((acc, message) => {
+    if (!isUserDataAddMessage(message)) {
+      return acc;
+    }
 
-      return {
-        ...acc,
-        [userDataTypeToJSON(message.data.userDataBody.type)]:
-          message.data.userDataBody.value,
-      };
-    },
-    {} as Record<string, string>
-  );
+    return {
+      ...acc,
+      [message.data.userDataBody.type]: message.data.userDataBody.value,
+    };
+  }, {} as Record<UserDataType, string>);
 }
 
 // Map of current key names to old key names that we want to preserve for backwards compatibility reasons

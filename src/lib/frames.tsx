@@ -45,6 +45,16 @@ export async function graphIntesectionFrame({
   } else {
     return {
       image: <ResultsView results={result}>{intersectionName}</ResultsView>,
+      buttons: [
+        {
+          label: "What's this?",
+          action: "post",
+          target: {
+            pathname: "/explainer",
+            query: { backTarget: refreshButtonTarget },
+          },
+        },
+      ],
     };
   }
 }
