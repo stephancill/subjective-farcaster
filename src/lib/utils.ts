@@ -333,8 +333,12 @@ export async function getAllLinksByTarget(
   fid: number,
   {
     hubUrl,
+    hubClient,
     onProgress,
-  }: { hubUrl: string; onProgress?: (message: string) => void }
+  }: (
+    | { hubUrl: string; hubClient?: never }
+    | { hubUrl?: never; hubClient: HubRpcClient }
+  ) & { onProgress?: (message: string) => void }
 ) {
   const cacheKey = getAllLinksByTargetKey(fid);
 
@@ -344,16 +348,18 @@ export async function getAllLinksByTarget(
     return cached;
   }
 
-  const linksMessages = await getAllMessagesFromHubEndpoint({
-    endpoint: "/v1/linksByTargetFid",
-    params: {
-      target_fid: fid.toString(),
-      link_type: "follow",
-    },
-    hubUrl,
-    debug: true,
-    onProgress,
-  });
+  const linksMessages = hubUrl
+    ? await getAllMessagesFromHubEndpoint({
+        endpoint: "/v1/linksByTargetFid",
+        params: {
+          target_fid: fid.toString(),
+          link_type: "follow",
+        },
+        hubUrl,
+        debug: true,
+        onProgress,
+      })
+    : await paginateRpc.getAllLinksByTarget({ fid }, hubClient!, onProgress);
 
   const linksSet = new Set<number>();
 

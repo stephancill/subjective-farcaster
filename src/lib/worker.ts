@@ -6,9 +6,8 @@ import {
   POPULATE_NETWORK_JOB_NAME,
 } from "./const";
 import { hubClient } from "./hub";
-import { getAllLinksByTarget } from "./paginate-rpc";
 import { RefreshNetworkJobData as FidJobData } from "./types";
-import { getNetworkByFid } from "./utils";
+import { getAllLinksByTarget, getNetworkByFid } from "./utils";
 
 const QUEUE_NAME = "default";
 
@@ -52,9 +51,12 @@ export function getWorker(
           `Populating followers for ${fid} at ${new Date().toISOString()}`
         );
 
-        await getAllLinksByTarget({ fid: fid }, hubClient, (message) => {
-          console.log(jobId, message);
-          job.updateProgress({ message });
+        await getAllLinksByTarget(fid, {
+          hubClient,
+          onProgress(message) {
+            console.log(jobId, message);
+            job.updateProgress({ message });
+          },
         });
 
         const elapsed = (Date.now() - start) / 1000;
