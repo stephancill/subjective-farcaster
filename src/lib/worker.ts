@@ -34,7 +34,6 @@ export function getWorker(
         );
 
         await getNetworkByFid(fid, {
-          hubUrl: HUB_URL,
           onProgress(message) {
             console.log(jobId, message);
             job.updateProgress({ message });
@@ -66,12 +65,11 @@ export function getWorker(
       }
     },
     {
-      autorun: false, // Don't start yet
+      autorun: false,
       useWorkerThreads: concurrency > 1,
       concurrency,
       connection: redis,
       removeOnComplete: { age: 60 * 12 }, // 12 hours
-      removeOnFail: { count: 100 }, // Keep at most this many failed jobs
     }
   );
 

@@ -55,15 +55,18 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const { allLinks, linksByDepth, popularityByFid } = deserializeNetwork(
-    viewerNetworkSerialized
-  );
+  const network = deserializeNetwork(viewerNetworkSerialized);
+
+  const { allLinks, linksByDepth, popularityByFid, linksByDepthCounts } =
+    network;
 
   return Response.json({
+    linksByDepthCounts,
     allLinks: Array.from(allLinks),
     linksByDepth: Object.entries(linksByDepth).reduce((acc, [depth, links]) => {
       acc[depth] = Array.from(links);
       return acc;
     }, {} as Record<string, number[]>),
+    popularityByFid,
   });
 }

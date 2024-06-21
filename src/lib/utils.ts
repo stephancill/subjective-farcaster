@@ -1,3 +1,4 @@
+import { HubRpcClient } from "@farcaster/hub-nodejs";
 import {
   ReactionType,
   UserDataType,
@@ -13,11 +14,10 @@ import { kv } from "@vercel/kv";
 import fastq from "fastq";
 import { createPublicClient, http, parseAbi } from "viem";
 import { optimism } from "viem/chains";
-import { getAllMessagesFromHubEndpoint } from "./paginate";
-import { SerializedNetwork } from "./types";
-import * as paginateRpc from "./paginate-rpc";
 import { hubClient } from "./hub";
-import { HubRpcClient } from "@farcaster/hub-nodejs";
+import { getAllMessagesFromHubEndpoint } from "./paginate";
+import * as paginateRpc from "./paginate-rpc";
+import { SerializedNetwork } from "./types";
 
 export function getPopulateNetworkJobId(fid: number) {
   return `refreshNetwork-${fid}`;
@@ -76,11 +76,11 @@ export async function getFidCount() {
 }
 
 export async function getGraphIntersection(
-  network: Awaited<ReturnType<typeof getNetworkByFid>>,
+  network: ReturnType<typeof deserializeNetwork>,
   fids: number[]
 ) {
   let startTime = Date.now();
-  const { allLinks, linksByDepth } = network;
+  const { allLinks, linksByDepth, linksByDepthCounts } = network;
   startTime = Date.now();
 
   const intersectionFids = fids.filter((fid) => {
@@ -89,15 +89,6 @@ export async function getGraphIntersection(
   });
 
   startTime = Date.now();
-
-  // Count network fids by depth
-  const linksByDepthCounts = Object.entries(linksByDepth).reduce(
-    (acc, [depth, fids]) => {
-      acc[parseInt(depth)] = fids.size;
-      return acc;
-    },
-    {} as Record<number, number>
-  );
 
   const intersectionByDepth = Object.entries(linksByDepth).reduce(
     (acc, [depth, fids]) => {
@@ -125,30 +116,53 @@ export async function getGraphIntersection(
   };
 }
 
-export function deserializeNetwork(network: SerializedNetwork) {
+export function deserializeNetwork(
+  network: SerializedNetwork,
+  options: {
+    minOccurrances?: number;
+  } = {
+    minOccurrances: 2,
+  }
+) {
   const allLinks = new Set<number>();
   const linksByDepth = Object.entries(network.linksByDepth).reduce(
     (acc, [depth, fids]) => {
-      // Add to allLinks
-      fids.forEach((fid) => allLinks.add(fid));
-      // Convert to Set
-      acc[parseInt(depth)] = new Set(fids);
+      acc[parseInt(depth)] = new Set<number>();
+
+      fids.forEach((fid) => {
+        if (
+          !options?.minOccurrances ||
+          network.popularityByFid[fid] >= options.minOccurrances
+        ) {
+          // Add to allLinks
+          allLinks.add(fid);
+          // Convert to Set
+          acc[parseInt(depth)].add(fid);
+        }
+      });
       return acc;
     },
     {} as Record<number, Set<number>>
   );
-  return { allLinks, ...network, linksByDepth };
+
+  const linksByDepthCounts = Object.entries(linksByDepth).reduce(
+    (acc, [depth, fids]) => {
+      acc[parseInt(depth)] = fids.size;
+      return acc;
+    },
+    {} as Record<number, number>
+  );
+
+  return { allLinks, ...network, linksByDepth, linksByDepthCounts };
 }
 
 export async function getNetworkByFid(
   fid: number,
   {
-    hubUrl,
     onProgress = () => {},
     forceRefresh,
   }: {
     onProgress?: (message: string) => void;
-    hubUrl: string;
     forceRefresh?: boolean;
   }
 ) {
@@ -160,85 +174,115 @@ export async function getNetworkByFid(
     return deserializeNetwork(cached);
   }
 
-  onProgress(`Getting all links for viewerFid ${fid}`);
-
-  const links = await getAllLinksByFid(fid, { hubClient });
-
-  console.log(`getAllLinksByFid ${Date.now() - startTime}ms`);
-
   // Breadth-first search to get all links up to N levels deep using getAllLinksByFid
   const allLinks = new Set<number>();
   const linksByDepth: Record<number, Set<number>> = {};
-  const popularityByFid: Record<number, number> = {};
-  let linksToSearch = new Set<number>(links);
-  let i = 0;
-  const N = 2;
+  const occurrancesByFid: Record<number, number> = {};
+  let linksToIndex = new Set<number>([fid]);
+  let depth = 0;
+  const MAX_DEPTH = 3;
 
-  while (i < N && linksToSearch.size > 0) {
-    onProgress(`Searching ${linksToSearch.size} links at depth ${i}`);
+  while (depth < MAX_DEPTH && linksToIndex.size > 0) {
+    /**
+     * This loop gets links for each fid in linksToIndex, and then adds them to nextLinks
+     */
+
+    onProgress(`Searching ${linksToIndex.size} links at depth ${depth}`);
 
     const nextLinks = new Array<number[]>();
-    linksByDepth[i] = new Set();
-    const linksToSearchArray = Array.from(linksToSearch);
+    linksByDepth[depth] = new Set();
+    const linksToIndexArray = Array.from(linksToIndex);
+
+    /** Fetch cached links and then fetch remaining */
+
+    const uncachedLinks: number[] = [];
+
+    // Get existing links for fids from cache
     let startTime = Date.now();
     const linksToSearchResults = await kv.mget<(number[] | null)[]>(
-      linksToSearchArray.map(getAllLinksByFidKey)
+      linksToIndexArray.map(getAllLinksByFidKey)
     );
-
     console.log(`kv.mget ${Date.now() - startTime}ms`);
 
-    const remaining = linksToSearchArray.filter((link, idx) => {
-      if (!allLinks.has(link)) linksByDepth[i].add(link);
+    // Index fids
+    linksToIndexArray.forEach((link, idx) => {
+      // If it's the first time we've seen this link, index it in linksByDepth
+      if (!allLinks.has(link)) {
+        linksByDepth[depth].add(link);
+      } else {
+      }
 
       allLinks.add(link);
 
+      // If we have cached links, add them to nextLinks, otherwise add to remaining
       if (linksToSearchResults[idx]) {
         nextLinks.push(linksToSearchResults[idx] as number[]);
+      } else {
+        uncachedLinks.push(link);
       }
-      return !linksToSearchResults[idx];
     });
 
-    onProgress(`Populating ${remaining.length} uncached links at depth ${i}`);
+    // If we're at the last depth, don't fetch any more links
+    if (depth === MAX_DEPTH - 1) {
+      depth++;
+      break;
+    }
 
+    onProgress(
+      `Populating ${uncachedLinks.length} uncached links at depth ${depth}`
+    );
+
+    // Fetch links worker
     let completed = 0;
     const queue = fastq.promise(async (fid: number) => {
+      const startTime = Date.now();
       const result = await getAllLinksByFid(fid, { hubClient });
       nextLinks.push(result);
       completed += 1;
+      const duration = Date.now() - startTime;
       if (completed % 200 === 0)
         onProgress(
-          `Populated uncached links at depth ${i}: ${completed.toLocaleString()}/${remaining.length.toLocaleString()}`
+          `Populated uncached links at depth ${depth}: ${completed.toLocaleString()}/${uncachedLinks.length.toLocaleString()} ${
+            Math.round((duration / 1000) * 100) / 100
+          }s`
         );
-    }, 1);
+    }, 50);
 
-    for (const fid of remaining) {
+    // Populate fetch links worker queue
+    startTime = Date.now();
+    for (const fid of uncachedLinks) {
       queue.push(fid);
     }
 
+    // Wait for all links to be fetched
     await queue.drained();
 
-    onProgress(`Populated uncached links at depth ${i}: ${remaining.length}`);
+    onProgress(
+      `Populated uncached links at depth ${depth}: ${uncachedLinks.length} ${
+        Math.round(((Date.now() - startTime) / 1000) * 100) / 100
+      }s`
+    );
 
-    linksToSearch = new Set<number>();
+    linksToIndex = new Set<number>();
 
     startTime = Date.now();
 
     // j = 0;
     for (const links of nextLinks) {
-      // console.log(`Processing batch ${j++}/${nextLinks.length}`);
-      links.forEach((l) => {
-        linksToSearch.add(l);
+      links.forEach((fid) => {
+        linksToIndex.add(fid);
 
-        if (!popularityByFid[l]) {
-          popularityByFid[l] = 0;
+        // Count occurrances of each fid
+        if (!occurrancesByFid[fid]) {
+          occurrancesByFid[fid] = 0;
         }
-        popularityByFid[l] += 1;
+        occurrancesByFid[fid] += 1;
       });
     }
 
     console.log(`Processing nextLinks ${Date.now() - startTime}ms`);
 
-    i++;
+    depth++;
   }
 
   const linksByDepthArrays = Object.entries(linksByDepth).reduce(
@@ -253,11 +297,13 @@ export async function getNetworkByFid(
 
   await kv.set(
     cacheKey,
-    { linksByDepth: linksByDepthArrays, popularityByFid },
+    { linksByDepth: linksByDepthArrays, popularityByFid: occurrancesByFid },
     { ex: 60 * 60 * 24 }
   );
 
-  return { allLinks, linksByDepth, popularityByFid };
+  onProgress(`Done`);
+
+  return { allLinks, linksByDepth, popularityByFid: occurrancesByFid };
 }
 
 export async function getAllLinksByFid(
